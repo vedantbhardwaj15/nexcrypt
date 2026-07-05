@@ -51,7 +51,13 @@ jobs:
 
       # Cleaner Configuration Step (Windows will automatically use CMAKE_TOOLCHAIN_FILE from env)
       - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/homebrew
+          else
+            cmake -B build -DCMAKE_BUILD_TYPE=Release
+          fi
 
       - name: Build
         run: cmake --build build --config Release
