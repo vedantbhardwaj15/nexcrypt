@@ -4,6 +4,10 @@ on:
   release:
     types: [created]
 
+permissions:
+  contents: write
+  releases: write
+
 jobs:
   build:
     name: Build on ${{ matrix.os }}
