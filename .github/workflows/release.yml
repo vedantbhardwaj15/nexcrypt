@@ -1,0 +1,40 @@
+name: Build and Release
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: nexcrypt.exe
+            asset_name: nexcrypt-windows-amd64.exe
+          - os: ubuntu-latest
+            artifact_name: nexcrypt
+            asset_name: nexcrypt-linux-amd64
+          - os: macos-latest
+            artifact_name: nexcrypt
+            asset_name: nexcrypt-macos-arm64
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Configure CMake
+      run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build
+      run: cmake --build build --config Release
+
+    - name: Upload Release Asset
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          build/${{ matrix.artifact_name }}
+          build/Release/${{ matrix.artifact_name }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
