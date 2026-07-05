@@ -44,7 +44,8 @@ jobs:
           vcpkg install libsodium:x64-windows-static
           echo "CMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_INSTALLATION_ROOT }}/scripts/buildsystems/vcpkg.cmake" >> $env:GITHUB_ENV
           echo "VCPKG_TARGET_TRIPLET=x64-windows-static" >> $env:GITHUB_ENV
-        shell: pwsh
+        shell: pwsh 
+        
 
       # --- CMAKE CONFIGURATION (OS SPECIFIC) ---
 
