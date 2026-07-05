@@ -21,6 +21,20 @@ else()
         set(SODIUM_INCLUDE_DIRS ${SODIUM_OK_INCLUDE_DIRS})
         set(SODIUM_LIBRARIES ${SODIUM_OK_LIBRARIES})
     else()
+        # Check Homebrew paths for macOS
+        if(APPLE)
+            execute_process(
+                COMMAND brew --prefix libsodium
+                OUTPUT_VARIABLE HOMEBREW_LIBSODIUM
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET
+            )
+            if(HOMEBREW_LIBSODIUM)
+                set(SODIUM_INCLUDE_DIR "${HOMEBREW_LIBSODIUM}/include")
+                set(SODIUM_LIBRARY "${HOMEBREW_LIBSODIUM}/lib/libsodium.dylib")
+            endif()
+        endif()
+        
         find_path(SODIUM_INCLUDE_DIR sodium.h)
         find_library(SODIUM_LIBRARY NAMES sodium libsodium)
 

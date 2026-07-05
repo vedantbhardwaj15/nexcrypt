@@ -42,6 +42,9 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew install libsodium pkg-config
+          echo "PKG_CONFIG_PATH=$(brew --prefix libsodium)/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+          echo "LDFLAGS=-L$(brew --prefix libsodium)/lib" >> $GITHUB_ENV
+          echo "CPPFLAGS=-I$(brew --prefix libsodium)/include" >> $GITHUB_ENV
 
       # Windows Dependency (Installs static version for standalone binary)
       - name: Install libsodium (Windows)
