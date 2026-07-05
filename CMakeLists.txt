@@ -6,8 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # 1. Check if we are building via vcpkg (Windows CI setup)
 if(DEFINED CMAKE_TOOLCHAIN_FILE AND CMAKE_TOOLCHAIN_FILE MATCHES "vcpkg")
-    find_package(libsodium CONFIG REQUIRED)
-    set(SODIUM_LIBRARIES libsodium::libsodium)
+    find_package(unofficial-sodium CONFIG REQUIRED)
+    set(SODIUM_LIBRARIES unofficial-sodium::sodium)
 else()
     # 2. Linux standard lookup
     find_package(PkgConfig QUIET)
