@@ -10,6 +10,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     strategy:
+      fail-fast: false  # Prevents one OS failure from canceling the others immediately
       matrix:
         include:
           - os: ubuntu-latest
@@ -27,6 +28,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # --- DEPENDENCY INSTALLATION ---
+
       # Linux Dependency
       - name: Install libsodium (Ubuntu)
         if: runner.os == 'Linux'
@@ -40,7 +43,7 @@ jobs:
         run: |
           brew install libsodium pkg-config
 
-      # Windows Dependency
+      # Windows Dependency (Installs static version for standalone binary)
       - name: Install libsodium (Windows)
         if: runner.os == 'Windows'
         run: |
@@ -49,15 +52,26 @@ jobs:
           echo "VCPKG_TARGET_TRIPLET=x64-windows-static" >> $env:GITHUB_ENV
         shell: pwsh
 
-      # Cleaner Configuration Step (Windows will automatically use CMAKE_TOOLCHAIN_FILE from env)
-      - name: Configure CMake
-        shell: bash
+
+      # --- CMAKE CONFIGURATION (OS SPECIFIC) ---
+
+      - name: Configure CMake (Linux)
+        if: runner.os == 'Linux'
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure CMake (macOS)
+        if: runner.os == 'macOS'
         run: |
-          if [ "${{ runner.os }}" = "macOS" ]; then
-            cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/homebrew
-          else
-            cmake -B build -DCMAKE_BUILD_TYPE=Release
-          fi
+          export PKG_CONFIG_PATH="$(brew --prefix libsodium)/lib/pkgconfig:${PKG_CONFIG_PATH}"
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix libsodium)"
+
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=$env:CMAKE_TOOLCHAIN_FILE
+
+
+      # --- BUILD & PACKAGE ---
 
       - name: Build
         run: cmake --build build --config Release
@@ -74,7 +88,8 @@ jobs:
             echo "Error: Binary not found!" && exit 1
           fi
 
-      # Upload directly into your official Release asset list
+      # --- AUTOMATED RELEASE UPLOAD ---
+
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
         with:
