@@ -8,9 +8,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(DEFINED CMAKE_TOOLCHAIN_FILE AND CMAKE_TOOLCHAIN_FILE MATCHES "vcpkg")
     find_package(libsodium CONFIG REQUIRED)
     set(SODIUM_LIBRARIES libsodium::libsodium)
-    # vcpkg handles includes automatically, so we don't need explicit include_directories for it
 else()
-    # 2. Linux/macOS standard lookup using your reliable fallback logic
+    # 2. Linux standard lookup
     find_package(PkgConfig QUIET)
 
     if(PkgConfig_FOUND)
@@ -21,20 +20,6 @@ else()
         set(SODIUM_INCLUDE_DIRS ${SODIUM_OK_INCLUDE_DIRS})
         set(SODIUM_LIBRARIES ${SODIUM_OK_LIBRARIES})
     else()
-        # Check Homebrew paths for macOS
-        if(APPLE)
-            execute_process(
-                COMMAND brew --prefix libsodium
-                OUTPUT_VARIABLE HOMEBREW_LIBSODIUM
-                OUTPUT_STRIP_TRAILING_WHITESPACE
-                ERROR_QUIET
-            )
-            if(HOMEBREW_LIBSODIUM)
-                set(SODIUM_INCLUDE_DIR "${HOMEBREW_LIBSODIUM}/include")
-                set(SODIUM_LIBRARY "${HOMEBREW_LIBSODIUM}/lib/libsodium.dylib")
-            endif()
-        endif()
-        
         find_path(SODIUM_INCLUDE_DIR sodium.h)
         find_library(SODIUM_LIBRARY NAMES sodium libsodium)
 

@@ -10,7 +10,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     strategy:
-      fail-fast: false  # Prevents one OS failure from canceling the others immediately
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -20,10 +20,6 @@ jobs:
           - os: windows-latest
             artifact_name: nexcrypt.exe
             asset_name: nexcrypt-windows-amd64.exe
-
-          - os: macos-latest
-            artifact_name: nexcrypt
-            asset_name: nexcrypt-macos-arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -37,16 +33,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libsodium-dev pkg-config
 
-      # macOS Dependency
-      - name: Install libsodium (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install libsodium pkg-config
-          echo "PKG_CONFIG_PATH=$(brew --prefix libsodium)/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
-          echo "LDFLAGS=-L$(brew --prefix libsodium)/lib" >> $GITHUB_ENV
-          echo "CPPFLAGS=-I$(brew --prefix libsodium)/include" >> $GITHUB_ENV
-
-      # Windows Dependency (Installs static version for standalone binary)
+      # Windows Dependency
       - name: Install libsodium (Windows)
         if: runner.os == 'Windows'
         run: |
@@ -55,24 +42,16 @@ jobs:
           echo "VCPKG_TARGET_TRIPLET=x64-windows-static" >> $env:GITHUB_ENV
         shell: pwsh
 
-
       # --- CMAKE CONFIGURATION (OS SPECIFIC) ---
 
       - name: Configure CMake (Linux)
         if: runner.os == 'Linux'
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 
-      - name: Configure CMake (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          export PKG_CONFIG_PATH="$(brew --prefix libsodium)/lib/pkgconfig:${PKG_CONFIG_PATH}"
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix libsodium)"
-
       - name: Configure CMake (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=$env:CMAKE_TOOLCHAIN_FILE
-
 
       # --- BUILD & PACKAGE ---
 
