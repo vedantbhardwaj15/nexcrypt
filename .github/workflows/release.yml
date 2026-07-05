@@ -41,9 +41,9 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           vcpkg install libsodium:x64-windows-static
-          echo "CMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_INSTALLATION_ROOT }}/scripts/buildsystems/vcpkg.cmake" >> $env:GITHUB_ENV
+          echo "CMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_INSTALLATION_ROOT }}\scripts\buildsystems\vcpkg.cmake" >> $env:GITHUB_ENV
           echo "VCPKG_TARGET_TRIPLET=x64-windows-static" >> $env:GITHUB_ENV
-        shell: pwsh 
+        shell: pwsh
 
 
       # --- CMAKE CONFIGURATION (OS SPECIFIC) ---
@@ -55,7 +55,13 @@ jobs:
       - name: Configure CMake (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=$env:CMAKE_TOOLCHAIN_FILE
+        run: |
+          $toolchain = "${{ env.VCPKG_INSTALLATION_ROOT }}\scripts\buildsystems\vcpkg.cmake"
+          if (!(Test-Path $toolchain)) {
+            Write-Error "Toolchain file not found at $toolchain"
+            exit 1
+          }
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$toolchain"
 
       # --- BUILD & PACKAGE ---
 
