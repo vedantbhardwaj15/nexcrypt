@@ -18,33 +18,37 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact_name: nexcrypt
-            asset_name: nexcrypt-linux-amd64
+            package_dir: nexcrypt-linux-amd64
+            archive_name: nexcrypt-linux-amd64.tar.gz
 
           - os: windows-latest
             artifact_name: nexcrypt.exe
-            asset_name: nexcrypt-windows-amd64.exe
+            package_dir: nexcrypt-windows-amd64
+            archive_name: nexcrypt-windows-amd64.zip
 
     steps:
       - uses: actions/checkout@v4
 
-      # --- DEPENDENCY INSTALLATION ---
+      # ----------------------------
+      # Install Dependencies
+      # ----------------------------
 
-      # Linux Dependency
       - name: Install libsodium (Ubuntu)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libsodium-dev pkg-config
 
-      # Windows Dependency
       - name: Install libsodium (Windows)
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
           vcpkg install libsodium:x64-windows-static
           echo "CMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" >> $env:GITHUB_ENV
-        shell: pwsh
 
-      # --- CMAKE CONFIGURATION (OS SPECIFIC) ---
+      # ----------------------------
+      # Configure CMake
+      # ----------------------------
 
       - name: Configure CMake (Linux)
         if: runner.os == 'Linux'
@@ -55,36 +59,64 @@ jobs:
         shell: pwsh
         run: |
           $toolchain = "$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake"
+
           if (!(Test-Path $toolchain)) {
-            Write-Error "Toolchain file not found at $toolchain"
+            Write-Error "Toolchain file not found!"
             exit 1
           }
-          cmake -B build -DCMAKE_BUILD_TYPE=Release `
+
+          cmake -B build `
+            -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="$toolchain" `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static
 
-      # --- BUILD & PACKAGE ---
+      # ----------------------------
+      # Build
+      # ----------------------------
 
       - name: Build
         run: cmake --build build --config Release
 
-      - name: Rename and Package Artifact
-        shell: bash
-        run: |
-          mkdir -p release
-          if [ -f build/${{ matrix.artifact_name }} ]; then
-            cp build/${{ matrix.artifact_name }} release/${{ matrix.asset_name }}
-          elif [ -f build/Release/${{ matrix.artifact_name }} ]; then
-            cp build/Release/${{ matrix.artifact_name }} release/${{ matrix.asset_name }}
-          else
-            echo "Error: Binary not found!" && exit 1
-          fi
+      # ----------------------------
+      # Package (Linux)
+      # ----------------------------
 
-      # --- AUTOMATED RELEASE UPLOAD ---
+      - name: Package Linux
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p release/${{ matrix.package_dir }}
+
+          cp build/nexcrypt release/${{ matrix.package_dir }}/
+          cp README.md release/${{ matrix.package_dir }}/
+
+          cd release
+
+          tar -czf ${{ matrix.archive_name }} ${{ matrix.package_dir }}
+
+      # ----------------------------
+      # Package (Windows)
+      # ----------------------------
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "release/${{ matrix.package_dir }}"
+
+          Copy-Item "build/Release/nexcrypt.exe" "release/${{ matrix.package_dir }}/"
+          Copy-Item "README.md" "release/${{ matrix.package_dir }}/"
+
+          Compress-Archive `
+            -Path "release/${{ matrix.package_dir }}" `
+            -DestinationPath "release/${{ matrix.archive_name }}"
+
+      # ----------------------------
+      # Upload Release Assets
+      # ----------------------------
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
         with:
-          files: release/${{ matrix.asset_name }}
+          files: release/${{ matrix.archive_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

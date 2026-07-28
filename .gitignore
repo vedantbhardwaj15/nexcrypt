@@ -1,3 +1,6 @@
 .env
 .env.*
+release/
 .vscode/
+*.zip
+*.tar.gz
