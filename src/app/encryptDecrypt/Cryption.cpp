@@ -19,6 +19,12 @@ namespace
     constexpr std::size_t PLAIN_CHUNK_SIZE = 256 * 1024;
     constexpr std::size_t CIPHER_CHUNK_SIZE = PLAIN_CHUNK_SIZE + crypto_secretstream_xchacha20poly1305_ABYTES;
 
+    // Fixed master salt for deterministic key derivation from password
+    constexpr unsigned char MASTER_SALT[crypto_pwhash_SALTBYTES] = {
+        0x4e, 0x65, 0x78, 0x43, 0x72, 0x79, 0x70, 0x74,
+        0x53, 0x61, 0x6c, 0x74, 0x32, 0x30, 0x32, 0x36
+    };
+
     std::once_flag g_cryptoOnceFlag;
     bool cryptoReady = false;
 
@@ -40,21 +46,6 @@ namespace
         return in.good();
     }
 
-    // Derive key from password + salt.
-    bool deriveKey(const std::string &password,
-                   const unsigned char salt[crypto_pwhash_SALTBYTES],
-                   unsigned char key[crypto_secretstream_xchacha20poly1305_KEYBYTES])
-    {
-        return crypto_pwhash(key,
-                             crypto_secretstream_xchacha20poly1305_KEYBYTES,
-                             password.c_str(),
-                             password.size(),
-                             salt,
-                             crypto_pwhash_OPSLIMIT_INTERACTIVE,
-                             crypto_pwhash_MEMLIMIT_INTERACTIVE,
-                             crypto_pwhash_ALG_DEFAULT) == 0;
-    }
-
     bool finalizeOutputFile(const fs::path &tempPath, const fs::path &outputPath)
     {
         std::error_code ec;
@@ -70,17 +61,7 @@ namespace
         return true;
     }
 }
-/* sodium_init is a function of libsodium library that inititalizes it before performing any of its cryptographic functions
--> Initializing internal cryptographic components.
--> Setting up secure random number generation.
--> Performing platform-specific initialization.
--> Ensuring the library is ready for cryptographic operations.
-*/
-/*
-0 → initialization succeeded.
-1 → library was already initialized.
--1 → initialization failed.
-*/
+
 bool initializeCrypto()
 {
     std::call_once(g_cryptoOnceFlag, []() {
@@ -90,7 +71,25 @@ bool initializeCrypto()
     return cryptoReady;
 }
 
-bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const std::string &password)
+// Derive key ONCE from password for the entire batch operation
+bool deriveKeyFromPassword(const std::string &password, unsigned char key[crypto_secretstream_xchacha20poly1305_KEYBYTES])
+{
+    if (!initializeCrypto())
+    {
+        return false;
+    }
+
+    return crypto_pwhash(key,
+                         crypto_secretstream_xchacha20poly1305_KEYBYTES,
+                         password.c_str(),
+                         password.size(),
+                         MASTER_SALT,
+                         crypto_pwhash_OPSLIMIT_INTERACTIVE,
+                         crypto_pwhash_MEMLIMIT_INTERACTIVE,
+                         crypto_pwhash_ALG_DEFAULT) == 0;
+}
+
+bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const unsigned char key[crypto_secretstream_xchacha20poly1305_KEYBYTES])
 {
     if (!initializeCrypto())
     {
@@ -101,7 +100,7 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const st
     std::ifstream in(inputPath, std::ios::binary);
     if (!in.is_open())
     {
-        std::cerr << "Unable to open input file: " << inputPath.u8string() << std::endl;
+        std::cerr << "Unable to open input file: " << inputPath.string() << std::endl;
         return false;
     }
 
@@ -112,49 +111,28 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const st
     std::ofstream out(tempOutputPath, std::ios::binary | std::ios::trunc);
     if (!out.is_open())
     {
-        std::cerr << "Unable to open temporary output file: " << tempOutputPath.u8string() << std::endl;
+        std::cerr << "Unable to open temporary output file: " << tempOutputPath.string() << std::endl;
         return false;
     }
 
-    unsigned char salt[crypto_pwhash_SALTBYTES];                             // 16 bytes
-    unsigned char key[crypto_secretstream_xchacha20poly1305_KEYBYTES];       // 32 bytes
-    unsigned char header[crypto_secretstream_xchacha20poly1305_HEADERBYTES]; // 24 bytes
+    unsigned char header[crypto_secretstream_xchacha20poly1305_HEADERBYTES];
+    crypto_secretstream_xchacha20poly1305_state state;
 
-    // info needed to decrypt the stream later. The header is not secret, but it must be saved or transmitted with the ciphertext.
-
-    crypto_secretstream_xchacha20poly1305_state state; // Keeps track of stream encryption as data is processed in chunks. It maintains the internal state of the encryption process, including the key, nonce, and any other necessary information to ensure that each chunk is encrypted correctly and securely.
-
-    randombytes_buf(salt, sizeof salt); // generates random salt to fill the salt buffer with random bytes.
-
-    if (!deriveKey(password, salt, key))
-    {
-        std::cerr << "Failed to derive encryption key" << std::endl;
-        out.close();
-        fs::remove(tempOutputPath, ec);
-        sodium_memzero(key, sizeof key);
-        return false;
-    }
-
-    const int initPushResult = crypto_secretstream_xchacha20poly1305_init_push(&state, header, key);
-    if (initPushResult != 0)
+    // init_push generates a unique per-file random header/nonce automatically
+    if (crypto_secretstream_xchacha20poly1305_init_push(&state, header, key) != 0)
     {
         std::cerr << "Failed to initialize encryption stream" << std::endl;
         out.close();
         fs::remove(tempOutputPath, ec);
-        sodium_memzero(key, sizeof key);
-        sodium_memzero(&state, sizeof state);
         return false;
     }
 
     if (!writeChars(out, MAGIC.data(), MAGIC.size()) ||
-        !writeBytes(out, salt, sizeof salt) ||
         !writeBytes(out, header, sizeof header))
     {
         std::cerr << "Failed to write encrypted file header" << std::endl;
         out.close();
         fs::remove(tempOutputPath, ec);
-        sodium_memzero(key, sizeof key);
-        sodium_memzero(&state, sizeof state);
         return false;
     }
 
@@ -164,19 +142,9 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const st
     bool success = true;
     while (success)
     {
-        // reinterpret_cast is used to point to memory of a diff type so it changes the pointer type. static_cast is used to convert one type to another
-
-        /*
-        Read upto the 256 kb of the file into plain buffer. 
-        The read function returns the number of bytes read, which is stored in bytesRead. 
-        If the end of the file is reached, the eof() function will return true, and the loop will exit.
-        */
         in.read(reinterpret_cast<char *>(plain.data()), static_cast<std::streamsize>(plain.size()));
-        const std::streamsize bytesRead = in.gcount(); 
+        const std::streamsize bytesRead = in.gcount();
 
-        /*  in.fail() alone   → could mean EOF (expected) OR a real error (unexpected)
-            !in.eof() && in.fail()  -> fail happened, AND it's NOT because of EOF, so it must be a REAL error (disk issue, corrupted file, etc.)
-        */
         if (bytesRead < 0 || (!in.eof() && in.fail()))
         {
             std::cerr << "Failed while reading input file" << std::endl;
@@ -222,23 +190,13 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const st
     if (!success)
     {
         fs::remove(tempOutputPath, ec);
-        sodium_memzero(key, sizeof key);
-        sodium_memzero(&state, sizeof state);
-        sodium_memzero(plain.data(), plain.size());
-        sodium_memzero(cipher.data(), cipher.size());
         return false;
     }
 
-    const bool finalized = finalizeOutputFile(tempOutputPath, fs::path(outputPath));
-
-    sodium_memzero(key, sizeof key);
-    sodium_memzero(&state, sizeof state);
-    sodium_memzero(plain.data(), plain.size());
-    sodium_memzero(cipher.data(), cipher.size());
-    return finalized;
+    return finalizeOutputFile(tempOutputPath, outputPath);
 }
 
-bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const std::string &password)
+bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const unsigned char key[crypto_secretstream_xchacha20poly1305_KEYBYTES])
 {
     if (!initializeCrypto())
     {
@@ -249,7 +207,7 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const st
     std::ifstream in(inputPath, std::ios::binary);
     if (!in.is_open())
     {
-        std::cerr << "Unable to open input file: " << inputPath.u8string() << std::endl;
+        std::cerr << "Unable to open input file: " << inputPath.string() << std::endl;
         return false;
     }
 
@@ -260,20 +218,17 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const st
     std::ofstream out(tempOutputPath, std::ios::binary | std::ios::trunc);
     if (!out.is_open())
     {
-        std::cerr << "Unable to open temporary output file: " << tempOutputPath.u8string() << std::endl;
+        std::cerr << "Unable to open temporary output file: " << tempOutputPath.string() << std::endl;
         return false;
     }
 
     std::array<char, MAGIC.size()> magic{};
-    unsigned char salt[crypto_pwhash_SALTBYTES];
-    unsigned char key[crypto_secretstream_xchacha20poly1305_KEYBYTES];
     unsigned char header[crypto_secretstream_xchacha20poly1305_HEADERBYTES];
     crypto_secretstream_xchacha20poly1305_state state;
 
     in.read(magic.data(), static_cast<std::streamsize>(magic.size()));
 
     if (!in.good() || magic != MAGIC ||
-        !readBytes(in, salt, sizeof salt) ||
         !readBytes(in, header, sizeof header))
     {
         std::cerr << "Invalid or unsupported encrypted file format" << std::endl;
@@ -282,21 +237,11 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const st
         return false;
     }
 
-    if (!deriveKey(password, salt, key))
-    {
-        std::cerr << "Failed to derive decryption key" << std::endl;
-        out.close();
-        fs::remove(tempOutputPath, ec);
-        sodium_memzero(key, sizeof key);
-        return false;
-    }
-
     if (crypto_secretstream_xchacha20poly1305_init_pull(&state, header, key) != 0)
     {
         std::cerr << "Failed to initialize decryption stream" << std::endl;
         out.close();
         fs::remove(tempOutputPath, ec);
-        sodium_memzero(key, sizeof key);
         return false;
     }
 
@@ -363,18 +308,8 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const st
     if (!success)
     {
         fs::remove(tempOutputPath, ec);
-        sodium_memzero(key, sizeof key);
-        sodium_memzero(&state, sizeof state);
-        sodium_memzero(plain.data(), plain.size());
-        sodium_memzero(cipher.data(), cipher.size());
         return false;
     }
 
-    const bool finalized = finalizeOutputFile(tempOutputPath, fs::path(outputPath));
-
-    sodium_memzero(key, sizeof key);
-    sodium_memzero(&state, sizeof state);
-    sodium_memzero(plain.data(), plain.size());
-    sodium_memzero(cipher.data(), cipher.size());
-    return finalized;
+    return finalizeOutputFile(tempOutputPath, outputPath);
 }
