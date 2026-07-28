@@ -4,3 +4,4 @@ release/
 .vscode/
 *.zip
 *.tar.gz
+build/
