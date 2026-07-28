@@ -3,6 +3,7 @@
 
 #include "Task.hpp"
 #include <atomic>
+#include <cstdint>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -26,6 +27,7 @@ class ProcessManagement {
 
         int getFilesProcessed() const { return filesProcessed.load(std::memory_order_relaxed); }
         int getFailures() const { return failures.load(std::memory_order_relaxed); }
+        std::uint64_t getBytesProcessed() const { return bytesProcessed.load(std::memory_order_relaxed); }
         double getElapsedSeconds() const { return elapsedTime; }
         int getNumWorkers() const { return numWorkers; }
 
@@ -38,6 +40,7 @@ class ProcessManagement {
         std::atomic<bool> submissionComplete{false};
         std::atomic<int> filesProcessed{0};
         std::atomic<int> failures{0};
+        std::atomic<std::uint64_t> bytesProcessed{0};
         double elapsedTime{0.0};
         int numWorkers;
 

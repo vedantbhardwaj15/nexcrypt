@@ -39,12 +39,12 @@ bool ProcessManagement::submitToQueue(std::unique_ptr<Task> task) {
 bool ProcessManagement::executeTasks(const std::string &password, bool preserveOriginals) {
     auto startTime = std::chrono::high_resolution_clock::now();
 
-    // Start workers FIRST so they can begin draining the queue
+    // spawn workers before marking submission complete to avoid premature thread exit
     for (int i = 0; i < numWorkers; ++i) {
         workerThreads.emplace_back(&ProcessManagement::workerFunc, this, password, preserveOriginals);
     }
 
-    // THEN signal that no more tasks will be submitted
+    // release memory order ensures workers see queued items before seeing submissionComplete
     submissionComplete.store(true, std::memory_order_release);
     queueCV.notify_all();
 
@@ -63,16 +63,35 @@ bool ProcessManagement::executeTasks(const std::string &password, bool preserveO
         std::cout << "\n" << std::string(50, '=') << std::endl;
         std::cout << "PROCESSING COMPLETE" << std::endl;
         std::cout << std::string(50, '=') << std::endl;
+        const auto totalBytes = getBytesProcessed();
         std::cout << "Files processed:    " << getFilesProcessed() << std::endl;
         std::cout << "Failures:           " << getFailures() << std::endl;
+
+        if (totalBytes < 1024ULL * 1024ULL) {
+            std::cout << "Data processed:     " << std::fixed << std::setprecision(2)
+                      << static_cast<double>(totalBytes) / 1024.0 << " KB" << std::endl;
+        } else if (totalBytes < 1024ULL * 1024ULL * 1024ULL) {
+            std::cout << "Data processed:     " << std::fixed << std::setprecision(2)
+                      << static_cast<double>(totalBytes) / (1024.0 * 1024.0) << " MB" << std::endl;
+        } else {
+            std::cout << "Data processed:     " << std::fixed << std::setprecision(2)
+                      << static_cast<double>(totalBytes) / (1024.0 * 1024.0 * 1024.0) << " GB" << std::endl;
+        }
+
         std::cout << "Worker threads:     " << numWorkers << std::endl;
         std::cout << "Total time:         " << std::fixed << std::setprecision(2)
                   << elapsedTime << " seconds" << std::endl;
 
         if (getFilesProcessed() > 0 && elapsedTime > 0.0) {
-            const double throughput = static_cast<double>(getFilesProcessed()) / elapsedTime;
+            const double fileThroughput = static_cast<double>(getFilesProcessed()) / elapsedTime;
             std::cout << "Throughput:         " << std::fixed << std::setprecision(2)
-                      << throughput << " files/sec" << std::endl;
+                      << fileThroughput << " files/sec" << std::endl;
+
+            if (totalBytes > 0) {
+                const double mbPerSec = static_cast<double>(totalBytes) / (1024.0 * 1024.0) / elapsedTime;
+                std::cout << "Data throughput:    " << std::fixed << std::setprecision(2)
+                          << mbPerSec << " MB/s" << std::endl;
+            }
         }
         std::cout << std::string(50, '=') << std::endl;
     }
@@ -91,6 +110,7 @@ void ProcessManagement::workerFunc(const std::string &password, bool preserveOri
                     || shutdown_flag.load(std::memory_order_acquire);
             });
 
+            // exit condition: queue fully drained and producer is done
             if (taskQueue.empty()) {
                 if (submissionComplete.load(std::memory_order_acquire) || shutdown_flag.load(std::memory_order_acquire)) {
                     break;
@@ -110,12 +130,18 @@ void ProcessManagement::workerFunc(const std::string &password, bool preserveOri
         fs::path outputPath;
         bool success = false;
 
+        // use non-throwing overload to avoid crashing worker if file access fails
+        std::error_code sizeEc;
+        const auto fileSize = fs::file_size(inputPath, sizeEc);
+        const std::uint64_t inputSize = sizeEc ? 0 : static_cast<std::uint64_t>(fileSize);
+
         try {
             if (taskToExecute->action == Action::ENCRYPT) {
+                // native() avoids losing unicode characters on windows wide paths
                 outputPath = fs::path(inputPath.native() + fs::path(".nex").native());
                 {
                     std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-                    std::cout << "[Worker] Encrypting: " << inputPath.filename() << std::endl;
+                    std::cout << "[Worker] Encrypting: " << inputPath.filename().u8string() << std::endl;
                 }
                 success = encryptFile(inputPath, outputPath, password);
 
@@ -124,7 +150,7 @@ void ProcessManagement::workerFunc(const std::string &password, bool preserveOri
                     fs::remove(outputPath, removeEc);
                     if (removeEc) {
                         std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-                        std::cerr << "Warning: could not remove partial output '" << outputPath << "': "
+                        std::cerr << "Warning: could not remove partial output '" << outputPath.u8string() << "': "
                                   << removeEc.message() << std::endl;
                     }
                 } else if (!preserveOriginals) {
@@ -132,7 +158,7 @@ void ProcessManagement::workerFunc(const std::string &password, bool preserveOri
                     fs::remove(inputPath, removeEc);
                     if (removeEc) {
                         std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-                        std::cerr << "Warning: could not remove original file '" << inputPath << "': "
+                        std::cerr << "Warning: could not remove original file '" << inputPath.u8string() << "': "
                                   << removeEc.message() << std::endl;
                     }
                 }
@@ -141,7 +167,7 @@ void ProcessManagement::workerFunc(const std::string &password, bool preserveOri
                 outputPath.replace_extension("");
                 {
                     std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-                    std::cout << "[Worker] Decrypting: " << inputPath.filename() << std::endl;
+                    std::cout << "[Worker] Decrypting: " << inputPath.filename().u8string() << std::endl;
                 }
                 success = decryptFile(inputPath, outputPath, password);
 
@@ -150,7 +176,7 @@ void ProcessManagement::workerFunc(const std::string &password, bool preserveOri
                     fs::remove(outputPath, removeEc);
                     if (removeEc) {
                         std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-                        std::cerr << "Warning: could not remove partial output '" << outputPath << "': "
+                        std::cerr << "Warning: could not remove partial output '" << outputPath.u8string() << "': "
                                   << removeEc.message() << std::endl;
                     }
                 } else {
@@ -158,23 +184,24 @@ void ProcessManagement::workerFunc(const std::string &password, bool preserveOri
                     fs::remove(inputPath, removeEc);
                     if (removeEc) {
                         std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-                        std::cerr << "Warning: could not remove encrypted file '" << inputPath << "': "
+                        std::cerr << "Warning: could not remove encrypted file '" << inputPath.u8string() << "': "
                                   << removeEc.message() << std::endl;
                     }
                 }
             }
         } catch (const std::exception &ex) {
-            std::cerr << "Worker exception while processing '" << inputPath << "': " << ex.what() << std::endl;
+            std::cerr << "Worker exception while processing '" << inputPath.u8string() << "': " << ex.what() << std::endl;
         } catch (...) {
-            std::cerr << "Worker encountered an unknown exception while processing '" << inputPath << "'" << std::endl;
+            std::cerr << "Worker encountered an unknown exception while processing '" << inputPath.u8string() << "'" << std::endl;
         }
 
         if (success) {
             filesProcessed.fetch_add(1, std::memory_order_relaxed);
+            bytesProcessed.fetch_add(inputSize, std::memory_order_relaxed);
         } else {
             failures.fetch_add(1, std::memory_order_relaxed);
             std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-            std::cerr << "ERROR: Failed to process " << inputPath << std::endl;
+            std::cerr << "ERROR: Failed to process " << inputPath.u8string() << std::endl;
         }
     }
 }

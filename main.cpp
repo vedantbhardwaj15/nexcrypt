@@ -34,7 +34,7 @@ bool shouldProcessFile(const fs::path &filePath,
                        const std::string &action) {
     if (action == "ENCRYPT") {
         if (hasNexExtension(filePath)) {
-            std::cout << "Skipping already encrypted file: " << filePath << std::endl;
+            std::cout << "Skipping already encrypted file: " << filePath.u8string() << std::endl;
             return false;
         }
         return true;
@@ -42,7 +42,7 @@ bool shouldProcessFile(const fs::path &filePath,
 
     if (!hasNexExtension(filePath)) {
         std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-        std::cout << "Skipping non-.nex file: " << filePath << std::endl;
+        std::cout << "Skipping non-.nex file: " << filePath.u8string() << std::endl;
         return false;
     }
     return true;
@@ -196,7 +196,7 @@ int main() {
                 if (!entry.is_regular_file(entryEc)) {
                     if (entryEc) {
                         std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-                        std::cerr << "Warning: could not inspect entry '" << entry.path() << "': " << entryEc.message() << std::endl;
+                        std::cerr << "Warning: could not inspect entry '" << entry.path().u8string() << "': " << entryEc.message() << std::endl;
                         entryEc.clear();
                     }
                     continue;

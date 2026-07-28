@@ -101,7 +101,7 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const st
     std::ifstream in(inputPath, std::ios::binary);
     if (!in.is_open())
     {
-        std::cerr << "Unable to open input file: " << inputPath << std::endl;
+        std::cerr << "Unable to open input file: " << inputPath.u8string() << std::endl;
         return false;
     }
 
@@ -112,7 +112,7 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const st
     std::ofstream out(tempOutputPath, std::ios::binary | std::ios::trunc);
     if (!out.is_open())
     {
-        std::cerr << "Unable to open temporary output file: " << tempOutputPath << std::endl;
+        std::cerr << "Unable to open temporary output file: " << tempOutputPath.u8string() << std::endl;
         return false;
     }
 
@@ -249,7 +249,7 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const st
     std::ifstream in(inputPath, std::ios::binary);
     if (!in.is_open())
     {
-        std::cerr << "Unable to open input file: " << inputPath << std::endl;
+        std::cerr << "Unable to open input file: " << inputPath.u8string() << std::endl;
         return false;
     }
 
@@ -260,7 +260,7 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const st
     std::ofstream out(tempOutputPath, std::ios::binary | std::ios::trunc);
     if (!out.is_open())
     {
-        std::cerr << "Unable to open temporary output file: " << tempOutputPath << std::endl;
+        std::cerr << "Unable to open temporary output file: " << tempOutputPath.u8string() << std::endl;
         return false;
     }
 
