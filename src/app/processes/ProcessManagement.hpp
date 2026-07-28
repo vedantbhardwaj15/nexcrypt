@@ -2,6 +2,7 @@
 #define PROCESS_MANAGEMENT_HPP
 
 #include "Task.hpp"
+#include <sodium.h>
 #include <atomic>
 #include <cstdint>
 #include <condition_variable>
@@ -44,7 +45,7 @@ class ProcessManagement {
         double elapsedTime{0.0};
         int numWorkers;
 
-        void workerFunc(const std::string &password, bool preserveOriginals);
+        void workerFunc(const unsigned char key[crypto_secretstream_xchacha20poly1305_KEYBYTES], bool preserveOriginals);
 };
 
 #endif
