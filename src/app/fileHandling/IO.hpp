@@ -2,12 +2,12 @@
 #define IO_HPP
 
 #include <fstream>
-#include <string>
+#include <filesystem>
 #include <iostream>
 
 class IO{
     public:
-        IO(const std::string &file_path); //no copy, read only
+        IO(const std::filesystem::path &file_path); //no copy, read only
         ~IO();
         std::fstream getFileStream();
 

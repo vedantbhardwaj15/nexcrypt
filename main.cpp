@@ -164,11 +164,11 @@ int main() {
 
         if (fs::is_regular_file(target)) {
             if (shouldProcessFile(target, action)) {
-                IO io(target.string());
+                IO io(target);
                 std::fstream fileStream = std::move(io.getFileStream());
                 if (fileStream.is_open()) {
                     Action taskAction = (action == "ENCRYPT") ? Action::ENCRYPT : Action::DECRYPT;
-                    auto task = std::make_unique<Task>(taskAction, target.string());
+                    auto task = std::make_unique<Task>(taskAction, target);
                     pm.submitToQueue(std::move(task));
                     fileCount++;
                 }
@@ -206,11 +206,11 @@ int main() {
                     continue;
                 }
 
-                IO io(entry.path().string());
+                IO io(entry.path());
                 std::fstream fileStream = std::move(io.getFileStream());
                 if (fileStream.is_open()) {
                     Action taskAction = (action == "ENCRYPT") ? Action::ENCRYPT : Action::DECRYPT;
-                    auto task = std::make_unique<Task>(taskAction, entry.path().string());
+                    auto task = std::make_unique<Task>(taskAction, entry.path());
                     pm.submitToQueue(std::move(task));
                     fileCount++;
                 }

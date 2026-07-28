@@ -13,7 +13,7 @@ ProcessManagement::ProcessManagement(int numWorkers)
     : numWorkers(numWorkers) {}
 
 ProcessManagement::~ProcessManagement() {
-    if (!taskQueue.empty()) {
+    {
         std::lock_guard<std::mutex> lock(queueMutex);
         if (!taskQueue.empty()) {
             std::cerr << "Warning: " << taskQueue.size()
@@ -37,14 +37,16 @@ bool ProcessManagement::submitToQueue(std::unique_ptr<Task> task) {
 }
 
 bool ProcessManagement::executeTasks(const std::string &password, bool preserveOriginals) {
-    submissionComplete.store(true, std::memory_order_release);
-    queueCV.notify_all();
-
     auto startTime = std::chrono::high_resolution_clock::now();
 
+    // Start workers FIRST so they can begin draining the queue
     for (int i = 0; i < numWorkers; ++i) {
         workerThreads.emplace_back(&ProcessManagement::workerFunc, this, password, preserveOriginals);
     }
+
+    // THEN signal that no more tasks will be submitted
+    submissionComplete.store(true, std::memory_order_release);
+    queueCV.notify_all();
 
     for (auto &thread : workerThreads) {
         if (thread.joinable()) {
@@ -110,12 +112,12 @@ void ProcessManagement::workerFunc(const std::string &password, bool preserveOri
 
         try {
             if (taskToExecute->action == Action::ENCRYPT) {
-                outputPath = fs::path(inputPath.string() + ".nex");
+                outputPath = fs::path(inputPath.native() + fs::path(".nex").native());
                 {
                     std::lock_guard<std::mutex> lock(getApplicationLogMutex());
                     std::cout << "[Worker] Encrypting: " << inputPath.filename() << std::endl;
                 }
-                success = encryptFile(inputPath.string(), outputPath.string(), password);
+                success = encryptFile(inputPath, outputPath, password);
 
                 if (!success) {
                     std::error_code removeEc;
@@ -141,7 +143,7 @@ void ProcessManagement::workerFunc(const std::string &password, bool preserveOri
                     std::lock_guard<std::mutex> lock(getApplicationLogMutex());
                     std::cout << "[Worker] Decrypting: " << inputPath.filename() << std::endl;
                 }
-                success = decryptFile(inputPath.string(), outputPath.string(), password);
+                success = decryptFile(inputPath, outputPath, password);
 
                 if (!success) {
                     std::error_code removeEc;

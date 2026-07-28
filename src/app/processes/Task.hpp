@@ -1,7 +1,7 @@
 #ifndef TASK_HPP
 #define TASK_HPP
 
-#include <string>
+#include <filesystem>
 #include <utility>
 
 enum class Action {
@@ -10,10 +10,10 @@ enum class Action {
 };
 
 struct Task {
-    std::string filePath;
+    std::filesystem::path filePath;
     Action action;
 
-    Task(Action act, std::string path)
+    Task(Action act, std::filesystem::path path)
         : filePath(std::move(path)), action(act) {}
 };
 

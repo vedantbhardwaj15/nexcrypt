@@ -1,3 +1,4 @@
+#include <filesystem>
 #include <iostream>
 #include <string>
 
@@ -10,8 +11,8 @@ int main(int argc, char* argv[]){
     }
 
     const std::string action = argv[1];
-    const std::string inputPath = argv[2];
-    const std::string outputPath = argv[3];
+    const std::filesystem::path inputPath = argv[2];
+    const std::filesystem::path outputPath = argv[3];
     const std::string password = argv[4];
 
     if(action == "ENCRYPT"){

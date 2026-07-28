@@ -90,7 +90,7 @@ bool initializeCrypto()
     return cryptoReady;
 }
 
-bool encryptFile(const std::string &inputPath, const std::string &outputPath, const std::string &password)
+bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const std::string &password)
 {
     if (!initializeCrypto())
     {
@@ -105,7 +105,7 @@ bool encryptFile(const std::string &inputPath, const std::string &outputPath, co
         return false;
     }
 
-    const fs::path tempOutputPath = fs::path(outputPath + ".tmp");
+    const fs::path tempOutputPath = fs::path(outputPath.native() + fs::path(".tmp").native());
     std::error_code ec;
     fs::remove(tempOutputPath, ec);
 
@@ -238,7 +238,7 @@ bool encryptFile(const std::string &inputPath, const std::string &outputPath, co
     return finalized;
 }
 
-bool decryptFile(const std::string &inputPath, const std::string &outputPath, const std::string &password)
+bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const std::string &password)
 {
     if (!initializeCrypto())
     {
@@ -253,7 +253,7 @@ bool decryptFile(const std::string &inputPath, const std::string &outputPath, co
         return false;
     }
 
-    const fs::path tempOutputPath = fs::path(outputPath + ".tmp");
+    const fs::path tempOutputPath = fs::path(outputPath.native() + fs::path(".tmp").native());
     std::error_code ec;
     fs::remove(tempOutputPath, ec);
 
