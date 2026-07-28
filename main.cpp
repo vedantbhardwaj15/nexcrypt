@@ -34,7 +34,7 @@ bool shouldProcessFile(const fs::path &filePath,
                        const std::string &action) {
     if (action == "ENCRYPT") {
         if (hasNexExtension(filePath)) {
-            std::cout << "Skipping already encrypted file: " << filePath.u8string() << std::endl;
+            std::cout << "Skipping already encrypted file: " << filePath.string() << std::endl;
             return false;
         }
         return true;
@@ -42,7 +42,7 @@ bool shouldProcessFile(const fs::path &filePath,
 
     if (!hasNexExtension(filePath)) {
         std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-        std::cout << "Skipping non-.nex file: " << filePath.u8string() << std::endl;
+        std::cout << "Skipping non-.nex file: " << filePath.string() << std::endl;
         return false;
     }
     return true;
@@ -109,44 +109,38 @@ int main() {
         std::lock_guard<std::mutex> lock(getApplicationLogMutex());
         std::cout << "Enter action (ENCRYPT/DECRYPT):" << std::endl;
     }
-    std::getline(std::cin, action);
+    std::cin >> action;
     action = toUpper(action);
 
     if (action != "ENCRYPT" && action != "DECRYPT") {
-        std::cerr << "Invalid action. Use ENCRYPT or DECRYPT." << std::endl;
+        std::cerr << "Invalid action. Must be ENCRYPT or DECRYPT." << std::endl;
         return 1;
     }
 
-    if (!readPasswordMasked(password)) {
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+
+    if (!readPasswordMasked(password) || password.empty()) {
+        std::cerr << "Password cannot be empty." << std::endl;
         return 1;
     }
 
     bool preserveOriginals = true;
     if (action == "ENCRYPT") {
-        std::cout << "Delete original files after encryption? (y/N):" << std::endl;
-        std::string preserveInput;
-        std::getline(std::cin, preserveInput);
-        preserveOriginals = !(preserveInput == "y" || preserveInput == "Y" || preserveInput == "yes" || preserveInput == "YES");
+        std::cout << "Delete original files after encryption? (y/N): ";
+        std::string choice;
+        std::getline(std::cin, choice);
+        if (!choice.empty() && (choice[0] == 'y' || choice[0] == 'Y')) {
+            preserveOriginals = false;
+        }
     }
 
-    if (password.empty()) {
-        std::cerr << "Password cannot be empty." << std::endl;
-        scrubPassword(password);
-        return 1;
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-        std::cout << "Enter number of parallel workers (default 4):" << std::endl;
-    }
+    int numWorkers = 4;
+    std::cout << "Enter number of parallel workers (default 4): ";
     std::string workerInput;
     std::getline(std::cin, workerInput);
-    int numWorkers = 4;
     try {
         if (!workerInput.empty()) {
             numWorkers = std::stoi(workerInput);
-            if (numWorkers < 1) numWorkers = 1;
-            if (numWorkers > 16) numWorkers = 16;
         }
     } catch (...) {
         numWorkers = 4;
@@ -164,14 +158,10 @@ int main() {
 
         if (fs::is_regular_file(target)) {
             if (shouldProcessFile(target, action)) {
-                IO io(target);
-                std::fstream fileStream = std::move(io.getFileStream());
-                if (fileStream.is_open()) {
-                    Action taskAction = (action == "ENCRYPT") ? Action::ENCRYPT : Action::DECRYPT;
-                    auto task = std::make_unique<Task>(taskAction, target);
-                    pm.submitToQueue(std::move(task));
-                    fileCount++;
-                }
+                Action taskAction = (action == "ENCRYPT") ? Action::ENCRYPT : Action::DECRYPT;
+                auto task = std::make_unique<Task>(taskAction, target);
+                pm.submitToQueue(std::move(task));
+                fileCount++;
             }
             const bool success = pm.executeTasks(password, preserveOriginals);
             scrubPassword(password);
@@ -186,33 +176,35 @@ int main() {
             for (; it != end; it.increment(ec)) {
                 if (ec) {
                     std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-            std::cerr << "Warning: could not access a directory entry: " << ec.message() << std::endl;
+                    std::cerr << "Warning: could not access a directory entry: " << ec.message() << std::endl;
                     ec.clear();
                     continue;
                 }
 
-                std::error_code entryEc;
-                const fs::directory_entry &entry = *it;
-                if (!entry.is_regular_file(entryEc)) {
-                    if (entryEc) {
-                        std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-                        std::cerr << "Warning: could not inspect entry '" << entry.path().u8string() << "': " << entryEc.message() << std::endl;
-                        entryEc.clear();
+                try {
+                    std::error_code entryEc;
+                    const fs::directory_entry &entry = *it;
+                    if (!entry.is_regular_file(entryEc)) {
+                        if (entryEc) {
+                            entryEc.clear();
+                        }
+                        continue;
                     }
-                    continue;
-                }
 
-                if (!shouldProcessFile(entry.path(), action)) {
-                    continue;
-                }
+                    if (!shouldProcessFile(entry.path(), action)) {
+                        continue;
+                    }
 
-                IO io(entry.path());
-                std::fstream fileStream = std::move(io.getFileStream());
-                if (fileStream.is_open()) {
                     Action taskAction = (action == "ENCRYPT") ? Action::ENCRYPT : Action::DECRYPT;
                     auto task = std::make_unique<Task>(taskAction, entry.path());
                     pm.submitToQueue(std::move(task));
                     fileCount++;
+                } catch (const std::exception &ex) {
+                    std::lock_guard<std::mutex> lock(getApplicationLogMutex());
+                    std::cerr << "Warning: skipping problematic file: " << ex.what() << std::endl;
+                } catch (...) {
+                    std::lock_guard<std::mutex> lock(getApplicationLogMutex());
+                    std::cerr << "Warning: skipping problematic file." << std::endl;
                 }
             }
 
