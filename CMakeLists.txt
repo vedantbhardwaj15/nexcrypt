@@ -4,6 +4,9 @@ project(nexcrypt LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Threading support
+find_package(Threads REQUIRED)
+
 # 1. Check if we are building via vcpkg (Windows CI setup)
 if(DEFINED CMAKE_TOOLCHAIN_FILE AND CMAKE_TOOLCHAIN_FILE MATCHES "vcpkg")
     find_package(unofficial-sodium CONFIG REQUIRED)
@@ -45,6 +48,6 @@ set(SRC_FILES
 )
 
 add_executable(nexcrypt ${SRC_FILES})
-target_link_libraries(nexcrypt PRIVATE ${SODIUM_LIBRARIES})
+target_link_libraries(nexcrypt PRIVATE ${SODIUM_LIBRARIES} Threads::Threads)
 
 install(TARGETS nexcrypt DESTINATION bin)
