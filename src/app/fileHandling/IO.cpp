@@ -3,9 +3,9 @@
 #include <fstream>
 
 IO::IO(const std::filesystem::path &file_path){
-    file_stream.open(file_path, std::ios::in | std::ios::out | std::ios::binary);
+    file_stream.open(file_path, std::ios::in | std::ios::binary);
     if(!file_stream.is_open()){
-        std::cout << " Unable to open the file: " <<file_path.u8string()<<std::endl;
+        std::cout << " Unable to open the file: " << file_path.string() << std::endl;
     }
 }
 
