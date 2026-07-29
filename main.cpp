@@ -2,7 +2,6 @@
 #include <cctype>
 #include <filesystem>
 #include <iostream>
-#include <limits>
 #include <memory>
 #include <string>
 
@@ -123,7 +122,7 @@ int main() {
         return 1;
     }
 
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    { std::string discard; std::getline(std::cin, discard); }
 
     if (!readPasswordMasked(password) || password.empty()) {
         std::cerr << "Password cannot be empty." << std::endl;
