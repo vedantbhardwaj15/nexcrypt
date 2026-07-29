@@ -34,7 +34,7 @@ bool shouldProcessFile(const fs::path &filePath,
                        const std::string &action) {
     if (action == "ENCRYPT") {
         if (hasNexExtension(filePath)) {
-            std::cout << "Skipping already encrypted file: " << filePath.string() << std::endl;
+            std::cout << "Skipping already encrypted file: " << safePathString(filePath) << std::endl;
             return false;
         }
         return true;
@@ -42,7 +42,7 @@ bool shouldProcessFile(const fs::path &filePath,
 
     if (!hasNexExtension(filePath)) {
         std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-        std::cout << "Skipping non-.nex file: " << filePath.string() << std::endl;
+        std::cout << "Skipping non-.nex file: " << safePathString(filePath) << std::endl;
         return false;
     }
     return true;
@@ -95,6 +95,11 @@ bool readPasswordMasked(std::string &password) {
 }
 
 int main() {
+#if defined(_WIN32)
+    SetConsoleCP(CP_UTF8);
+    SetConsoleOutputCP(CP_UTF8);
+#endif
+
     std::string pathInput;
     std::string action;
     std::string password;
@@ -156,7 +161,8 @@ int main() {
         ProcessManagement pm(numWorkers);
         int fileCount = 0;
 
-        if (fs::is_regular_file(target)) {
+        std::error_code isRegEc;
+        if (fs::is_regular_file(target, isRegEc)) {
             if (shouldProcessFile(target, action)) {
                 Action taskAction = (action == "ENCRYPT") ? Action::ENCRYPT : Action::DECRYPT;
                 auto task = std::make_unique<Task>(taskAction, target);
@@ -168,7 +174,8 @@ int main() {
             return success ? 0 : 1;
         }
 
-        if (fs::is_directory(target)) {
+        std::error_code isDirEc;
+        if (fs::is_directory(target, isDirEc)) {
             std::error_code ec;
             fs::recursive_directory_iterator it(target, fs::directory_options::skip_permission_denied, ec);
             fs::recursive_directory_iterator end;

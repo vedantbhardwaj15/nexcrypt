@@ -138,20 +138,20 @@ void ProcessManagement::workerFunc(const unsigned char key[crypto_secretstream_x
             continue;
         }
 
-        const fs::path &inputPath = taskToExecute->filePath;
-        fs::path outputPath;
-        bool success = false;
-
-        std::error_code sizeEc;
-        const auto fileSize = fs::file_size(inputPath, sizeEc);
-        const std::uint64_t inputSize = sizeEc ? 0 : static_cast<std::uint64_t>(fileSize);
-
         try {
+            const fs::path &inputPath = taskToExecute->filePath;
+            fs::path outputPath;
+            bool success = false;
+
+            std::error_code sizeEc;
+            const auto fileSize = fs::file_size(inputPath, sizeEc);
+            const std::uint64_t inputSize = sizeEc ? 0 : static_cast<std::uint64_t>(fileSize);
+
             if (taskToExecute->action == Action::ENCRYPT) {
                 outputPath = fs::path(inputPath.native() + fs::path(".nex").native());
                 {
                     std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-                    std::cout << "[Worker] Encrypting: " << inputPath.filename().string() << std::endl;
+                    std::cout << "[Worker] Encrypting: " << safePathString(inputPath.filename()) << std::endl;
                 }
                 success = encryptFile(inputPath, outputPath, key);
 
@@ -167,7 +167,7 @@ void ProcessManagement::workerFunc(const unsigned char key[crypto_secretstream_x
                 outputPath.replace_extension("");
                 {
                     std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-                    std::cout << "[Worker] Decrypting: " << inputPath.filename().string() << std::endl;
+                    std::cout << "[Worker] Decrypting: " << safePathString(inputPath.filename()) << std::endl;
                 }
                 success = decryptFile(inputPath, outputPath, key);
 
@@ -179,23 +179,23 @@ void ProcessManagement::workerFunc(const unsigned char key[crypto_secretstream_x
                     fs::remove(inputPath, removeEc);
                 }
             }
-        } catch (const std::exception &ex) {
-            std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-            std::cerr << "[Warning] Skipping file due to error: " << ex.what() << std::endl;
-            success = false;
-        } catch (...) {
-            std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-            std::cerr << "[Warning] Skipping file due to unknown exception." << std::endl;
-            success = false;
-        }
 
-        if (success) {
-            filesProcessed.fetch_add(1, std::memory_order_relaxed);
-            bytesProcessed.fetch_add(inputSize, std::memory_order_relaxed);
-        } else {
+            if (success) {
+                filesProcessed.fetch_add(1, std::memory_order_relaxed);
+                bytesProcessed.fetch_add(inputSize, std::memory_order_relaxed);
+            } else {
+                failures.fetch_add(1, std::memory_order_relaxed);
+                std::lock_guard<std::mutex> lock(getApplicationLogMutex());
+                std::cerr << "ERROR: Failed to process file: " << safePathString(inputPath) << std::endl;
+            }
+        } catch (const std::exception &ex) {
             failures.fetch_add(1, std::memory_order_relaxed);
             std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-            std::cerr << "ERROR: Failed to process file: " << inputPath.string() << std::endl;
+            std::cerr << "[Warning] Skipping file due to error: " << ex.what() << std::endl;
+        } catch (...) {
+            failures.fetch_add(1, std::memory_order_relaxed);
+            std::lock_guard<std::mutex> lock(getApplicationLogMutex());
+            std::cerr << "[Warning] Skipping file due to unknown exception." << std::endl;
         }
     }
 }
