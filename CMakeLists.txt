@@ -48,6 +48,12 @@ set(SRC_FILES
 )
 
 add_executable(nexcrypt ${SRC_FILES})
+
+# MSVC windows.h defines max/min macros that break std::numeric_limits
+if(MSVC)
+    target_compile_definitions(nexcrypt PRIVATE NOMINMAX)
+endif()
+
 target_link_libraries(nexcrypt PRIVATE ${SODIUM_LIBRARIES} Threads::Threads)
 
 install(TARGETS nexcrypt DESTINATION bin)

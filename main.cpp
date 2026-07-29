@@ -1,12 +1,8 @@
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-
-#include <limits>
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <string>
 
@@ -127,7 +123,7 @@ int main() {
         return 1;
     }
 
-    std::cin.ignore(1024, '\n');
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 
     if (!readPasswordMasked(password) || password.empty()) {
         std::cerr << "Password cannot be empty." << std::endl;
