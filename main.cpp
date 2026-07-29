@@ -2,10 +2,14 @@
 #include <cctype>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <string>
 
 #if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #elif defined(__unix__)
 #include <termios.h>
@@ -122,7 +126,7 @@ int main() {
         return 1;
     }
 
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    std::cin.ignore((std::numeric_limits<std::streamsize>::max)(), '\n');
 
     if (!readPasswordMasked(password) || password.empty()) {
         std::cerr << "Password cannot be empty." << std::endl;
