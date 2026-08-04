@@ -20,7 +20,7 @@ inline std::mutex &getApplicationLogMutex() {
 
 class ProcessManagement {
     public:
-        explicit ProcessManagement(int numWorkers = 4);
+        explicit ProcessManagement(int numWorkers = 4, std::size_t chunkSizeKB = 256);
         ~ProcessManagement();
         bool submitToQueue(std::unique_ptr<Task> task);
         bool executeTasks(const std::string &password, bool preserveOriginals);
@@ -31,6 +31,7 @@ class ProcessManagement {
         std::uint64_t getBytesProcessed() const { return bytesProcessed.load(std::memory_order_relaxed); }
         double getElapsedSeconds() const { return elapsedTime; }
         int getNumWorkers() const { return numWorkers; }
+        std::size_t getChunkSizeKB() const { return chunkSizeKB; }
 
     private:
         std::queue<std::unique_ptr<Task>> taskQueue;
@@ -44,6 +45,7 @@ class ProcessManagement {
         std::atomic<std::uint64_t> bytesProcessed{0};
         double elapsedTime{0.0};
         int numWorkers;
+        std::size_t chunkSizeKB;
 
         void workerFunc(const unsigned char key[crypto_secretstream_xchacha20poly1305_KEYBYTES], bool preserveOriginals);
 };

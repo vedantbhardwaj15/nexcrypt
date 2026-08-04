@@ -150,15 +150,31 @@ int main() {
     } catch (...) {
         numWorkers = 4;
     }
+
+    std::size_t chunkSizeKB = 256;
+    std::cout << "Enter chunk size in KB (default 256): ";
+    std::string chunkInput;
+    std::getline(std::cin, chunkInput);
+    try {
+        if (!chunkInput.empty()) {
+            std::size_t parsed = std::stoull(chunkInput);
+            if (parsed > 0) {
+                chunkSizeKB = parsed;
+            }
+        }
+    } catch (...) {
+        chunkSizeKB = 256;
+    }
+
     {
         std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-        std::cout << "Using " << numWorkers << " parallel worker threads." << std::endl;
+        std::cout << "Using " << numWorkers << " parallel worker threads with " << chunkSizeKB << " KB chunk size." << std::endl;
     }
 
     const fs::path target(pathInput);
 
     try {
-        ProcessManagement pm(numWorkers);
+        ProcessManagement pm(numWorkers, chunkSizeKB);
         int fileCount = 0;
 
         std::error_code isRegEc;

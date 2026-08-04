@@ -24,9 +24,7 @@ namespace
     // Per-file salt length (16 bytes = 128-bit entropy for BLAKE2b subkey derivation)
     constexpr std::size_t FILE_SALT_BYTES = 16;
 
-    // Read/write buffer sizing: 256KB plaintext chunks balance I/O efficiency and RAM usage
-    constexpr std::size_t PLAIN_CHUNK_SIZE = 256 * 1024;
-    constexpr std::size_t CIPHER_CHUNK_SIZE = PLAIN_CHUNK_SIZE + crypto_secretstream_xchacha20poly1305_ABYTES;
+    // Chunk size constants are defined in Cryption.hpp as NEXCRYPT_PLAIN_CHUNK_SIZE / NEXCRYPT_CIPHER_CHUNK_SIZE
 
     // Master salt for deriving the session master key from user password via Argon2id
     constexpr unsigned char MASTER_SALT[crypto_pwhash_SALTBYTES] = {
@@ -130,7 +128,9 @@ bool deriveKeyFromPassword(const std::string &password, unsigned char key[crypto
 }
 
 // Encrypt a single file using XChaCha20-Poly1305 chunked secretstream
-bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const unsigned char masterKey[crypto_secretstream_xchacha20poly1305_KEYBYTES])
+bool encryptFile(const fs::path &inputPath, const fs::path &outputPath,
+                 const unsigned char masterKey[crypto_secretstream_xchacha20poly1305_KEYBYTES],
+                 std::vector<unsigned char> &plainBuf, std::vector<unsigned char> &cipherBuf)
 {
     if (!initializeCrypto())
     {
@@ -197,14 +197,11 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
         return false;
     }
 
-    std::vector<unsigned char> plain(PLAIN_CHUNK_SIZE);
-    std::vector<unsigned char> cipher(CIPHER_CHUNK_SIZE);
-
-    // 5. Encrypt stream in 256KB chunks
+    // 5. Encrypt stream using caller-provided reusable buffers
     bool success = true;
     while (success)
     {
-        in.read(reinterpret_cast<char *>(plain.data()), static_cast<std::streamsize>(plain.size()));
+        in.read(reinterpret_cast<char *>(plainBuf.data()), static_cast<std::streamsize>(plainBuf.size()));
         const std::streamsize bytesRead = in.gcount();
 
         if (bytesRead < 0 || (!in.eof() && in.fail()))
@@ -218,9 +215,9 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
         unsigned long long cipherLength = 0;
         const int pushResult = crypto_secretstream_xchacha20poly1305_push(
             &state,
-            cipher.data(),
+            cipherBuf.data(),
             &cipherLength,
-            plain.data(),
+            plainBuf.data(),
             static_cast<unsigned long long>(bytesRead),
             nullptr,
             0,
@@ -234,7 +231,7 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
             break;
         }
 
-        if (!writeBytes(out, cipher.data(), static_cast<std::size_t>(cipherLength)))
+        if (!writeBytes(out, cipherBuf.data(), static_cast<std::size_t>(cipherLength)))
         {
             std::cerr << "[I/O Error] Failed writing encrypted chunk to disk (disk full or write error)." << '\n';
             success = false;
@@ -261,7 +258,9 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
 }
 
 // Decrypt a single file and verify authenticated tag chunks
-bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const unsigned char masterKey[crypto_secretstream_xchacha20poly1305_KEYBYTES])
+bool decryptFile(const fs::path &inputPath, const fs::path &outputPath,
+                 const unsigned char masterKey[crypto_secretstream_xchacha20poly1305_KEYBYTES],
+                 std::vector<unsigned char> &cipherBuf, std::vector<unsigned char> &plainBuf)
 {
     if (!initializeCrypto())
     {
@@ -354,16 +353,14 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
         return false;
     }
 
-    std::vector<unsigned char> cipher(CIPHER_CHUNK_SIZE);
-    std::vector<unsigned char> plain(PLAIN_CHUNK_SIZE);
     bool sawFinal = false;
     bool success = true;
 
-    // 5. Decrypt chunk by chunk
+    // 5. Decrypt chunk by chunk using caller-provided reusable buffers
     while (!sawFinal && success)
     {
-        in.read(reinterpret_cast<char *>(cipher.data()),
-                static_cast<std::streamsize>(cipher.size()));
+        in.read(reinterpret_cast<char *>(cipherBuf.data()),
+                static_cast<std::streamsize>(cipherBuf.size()));
         const std::streamsize bytesRead = in.gcount();
 
         if (bytesRead == 0)
@@ -386,9 +383,9 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
         unsigned char tag = 0;
         if (crypto_secretstream_xchacha20poly1305_pull(
                 &state,
-                plain.data(), &plainLength,
+                plainBuf.data(), &plainLength,
                 &tag,
-                cipher.data(),
+                cipherBuf.data(),
                 static_cast<unsigned long long>(bytesRead),
                 nullptr,
                 0) != 0)
@@ -399,7 +396,7 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
             break;
         }
 
-        if (!writeBytes(out, plain.data(), static_cast<std::size_t>(plainLength)))
+        if (!writeBytes(out, plainBuf.data(), static_cast<std::size_t>(plainLength)))
         {
             std::cerr << "[I/O Error] Failed writing decrypted plaintext to disk." << '\n';
             success = false;

@@ -9,8 +9,9 @@
 
 namespace fs = std::filesystem;
 
-ProcessManagement::ProcessManagement(int numWorkers)
-    : numWorkers(numWorkers <= 0 ? 4 : numWorkers) {}
+ProcessManagement::ProcessManagement(int numWorkers, std::size_t chunkSizeKB)
+    : numWorkers(numWorkers <= 0 ? 4 : numWorkers),
+      chunkSizeKB(chunkSizeKB == 0 ? 256 : chunkSizeKB) {}
 
 ProcessManagement::~ProcessManagement() {
     shutdown();
@@ -98,6 +99,7 @@ bool ProcessManagement::executeTasks(const std::string &password, bool preserveO
     }
 
     std::cout << "Worker threads:     " << numWorkers << std::endl;
+    std::cout << "Chunk size:         " << chunkSizeKB << " KB" << std::endl;
     std::cout << std::fixed << std::setprecision(2) << "Total time:         " << elapsedTime << " seconds" << std::endl;
 
     if (elapsedTime > 0.0) {
@@ -112,6 +114,12 @@ bool ProcessManagement::executeTasks(const std::string &password, bool preserveO
 }
 
 void ProcessManagement::workerFunc(const unsigned char key[crypto_secretstream_xchacha20poly1305_KEYBYTES], bool preserveOriginals) {
+    // Pre-allocate I/O buffers ONCE per worker thread using runtime chunk size
+    const std::size_t plainSize = chunkSizeKB * 1024;
+    const std::size_t cipherSize = plainSize + crypto_secretstream_xchacha20poly1305_ABYTES;
+    std::vector<unsigned char> plainBuf(plainSize);
+    std::vector<unsigned char> cipherBuf(cipherSize);
+
     while (true) {
         std::unique_ptr<Task> taskToExecute;
         {
@@ -153,7 +161,7 @@ void ProcessManagement::workerFunc(const unsigned char key[crypto_secretstream_x
                     std::lock_guard<std::mutex> lock(getApplicationLogMutex());
                     std::cout << "[Worker] Encrypting: " << safePathString(inputPath.filename()) << '\n';
                 }
-                success = encryptFile(inputPath, outputPath, key);
+                success = encryptFile(inputPath, outputPath, key, plainBuf, cipherBuf);
 
                 if (!success) {
                     std::error_code removeEc;
@@ -169,7 +177,7 @@ void ProcessManagement::workerFunc(const unsigned char key[crypto_secretstream_x
                     std::lock_guard<std::mutex> lock(getApplicationLogMutex());
                     std::cout << "[Worker] Decrypting: " << safePathString(inputPath.filename()) << '\n';
                 }
-                success = decryptFile(inputPath, outputPath, key);
+                success = decryptFile(inputPath, outputPath, key, cipherBuf, plainBuf);
 
                 if (!success) {
                     std::error_code removeEc;
