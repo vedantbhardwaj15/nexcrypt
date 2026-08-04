@@ -1,6 +1,7 @@
 #include "ProcessManagement.hpp"
 
 #include "../encryptDecrypt/Cryption.hpp"
+#include "ProgressReporter.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -19,6 +20,9 @@ ProcessManagement::~ProcessManagement() {
 
 bool ProcessManagement::submitToQueue(std::unique_ptr<Task> task) {
     if (!task) return false;
+    // Accumulate file size on the main thread before workers start.
+    // This is the only place totalBytesAccum_ is written; no lock needed.
+    totalBytesAccum_ += task->fileSize;
     {
         std::lock_guard<std::mutex> lock(queueMutex);
         taskQueue.push(std::move(task));
@@ -43,10 +47,20 @@ void ProcessManagement::shutdown() {
 }
 
 bool ProcessManagement::executeTasks(const std::string &password, bool preserveOriginals) {
+    // Reset worker-written atomics.
     filesProcessed.store(0, std::memory_order_relaxed);
     failures.store(0, std::memory_order_relaxed);
     bytesProcessed.store(0, std::memory_order_relaxed);
     shutdown_flag.store(false, std::memory_order_release);
+
+    // Pre-compute totals on the main thread BEFORE any worker starts.
+    // Workers never touch these values.
+
+    // taskQueue has not been touched by any worker yet (they haven't started),
+    // so reading its size without the mutex is safe at this point.
+    const std::uint64_t totalFiles = static_cast<std::uint64_t>(taskQueue.size());
+    const std::uint64_t totalBytes = totalBytesAccum_;
+    totalBytesAccum_ = 0; // reset for potential reuse
 
     unsigned char key[crypto_secretstream_xchacha20poly1305_KEYBYTES];
     if (!deriveKeyFromPassword(password, key)) {
@@ -56,6 +70,19 @@ bool ProcessManagement::executeTasks(const std::string &password, bool preserveO
 
     const auto startTime = std::chrono::high_resolution_clock::now();
 
+    
+    // Construct ProgressReporter and start it BEFORE spawning workers.
+    // It holds const-refs to our atomics and the precomputed totals.
+    // RAII: reporter.stop() is called explicitly after join; the destructor
+    // is a no-op by that point.
+    
+    ProgressReporter reporter(totalFiles, totalBytes,
+                              filesProcessed, bytesProcessed, failures);
+    reporter.start();
+
+    // ---------------------------------------------------------------------------
+    // Spawn worker threads — workerFunc is NOT modified in any way.
+    // ---------------------------------------------------------------------------
     workerThreads.reserve(static_cast<std::size_t>(numWorkers));
     for (int i = 0; i < numWorkers; ++i) {
         workerThreads.emplace_back(&ProcessManagement::workerFunc, this, key, preserveOriginals);
@@ -71,44 +98,48 @@ bool ProcessManagement::executeTasks(const std::string &password, bool preserveO
     }
     workerThreads.clear();
 
+    // All workers have finished.  Stop the progress thread (prints final bar + \n).
+    reporter.stop();
+
     sodium_memzero(key, sizeof key);
 
     const auto endTime = std::chrono::high_resolution_clock::now();
     elapsedTime = std::chrono::duration<double>(endTime - startTime).count();
 
-    const int totalProcessed = filesProcessed.load(std::memory_order_relaxed);
-    const int totalFailures = failures.load(std::memory_order_relaxed);
-    const std::uint64_t totalBytes = bytesProcessed.load(std::memory_order_relaxed);
+    const std::uint64_t totalProcessed = filesProcessed.load(std::memory_order_relaxed);
+    const std::uint64_t totalFailures  = failures.load(std::memory_order_relaxed);
+    const std::uint64_t totalBytesProc = bytesProcessed.load(std::memory_order_relaxed);
 
-    double bytesInKB = static_cast<double>(totalBytes) / 1024.0;
-    double bytesInMB = bytesInKB / 1024.0;
-    double bytesInGB = bytesInMB / 1024.0;
+    const double bytesInKB = static_cast<double>(totalBytesProc) / 1024.0;
+    const double bytesInMB = bytesInKB / 1024.0;
+    const double bytesInGB = bytesInMB / 1024.0;
 
-    std::cout << "\n==================================================" << std::endl;
-    std::cout << "PROCESSING COMPLETE" << std::endl;
-    std::cout << "==================================================" << std::endl;
-    std::cout << "Files processed:    " << totalProcessed << std::endl;
-    std::cout << "Failures:           " << totalFailures << std::endl;
+    std::cout << "\n==================================================\n";
+    std::cout << "PROCESSING COMPLETE\n";
+    std::cout << "==================================================\n";
 
-    if (bytesInGB >= 1.0) {
-        std::cout << std::fixed << std::setprecision(2) << "Data processed:     " << bytesInGB << " GB" << std::endl;
-    } else if (bytesInMB >= 1.0) {
-        std::cout << std::fixed << std::setprecision(2) << "Data processed:     " << bytesInMB << " MB" << std::endl;
-    } else {
-        std::cout << std::fixed << std::setprecision(2) << "Data processed:     " << bytesInKB << " KB" << std::endl;
-    }
+    // Format data processed in human-readable units.
+    char dataBuf[20];
+    if (bytesInGB >= 1.0)
+        std::snprintf(dataBuf, sizeof dataBuf, "%.2f GB", bytesInGB);
+    else if (bytesInMB >= 1.0)
+        std::snprintf(dataBuf, sizeof dataBuf, "%.2f MB", bytesInMB);
+    else
+        std::snprintf(dataBuf, sizeof dataBuf, "%.2f KB", bytesInKB);
 
-    std::cout << "Worker threads:     " << numWorkers << std::endl;
-    std::cout << "Chunk size:         " << chunkSizeKB << " KB" << std::endl;
-    std::cout << std::fixed << std::setprecision(2) << "Total time:         " << elapsedTime << " seconds" << std::endl;
-
+    std::cout << std::left;
+    std::cout << std::setw(16) << "Files processed" << ": " << totalProcessed << '\n';
+    std::cout << std::setw(16) << "Failures"        << ": " << totalFailures  << '\n';
+    std::cout << std::setw(16) << "Data processed"  << ": " << dataBuf        << '\n';
+    std::cout << std::setw(16) << "Worker threads"  << ": " << numWorkers     << '\n';
+    std::cout << std::setw(16) << "Chunk size"      << ": " << chunkSizeKB    << " KB\n";
+    std::cout << std::fixed << std::setprecision(1);
+    std::cout << std::setw(16) << "Time"            << ": " << elapsedTime    << " s\n";
     if (elapsedTime > 0.0) {
-        const double throughputFiles = static_cast<double>(totalProcessed) / elapsedTime;
-        const double throughputMB = (static_cast<double>(totalBytes) / (1024.0 * 1024.0)) / elapsedTime;
-        std::cout << std::fixed << std::setprecision(2) << "Throughput:         " << throughputFiles << " files/sec" << std::endl;
-        std::cout << std::fixed << std::setprecision(2) << "Data throughput:    " << throughputMB << " MB/s" << std::endl;
+        const double throughputMB = (static_cast<double>(totalBytesProc) / (1024.0 * 1024.0)) / elapsedTime;
+        std::cout << std::setw(16) << "Throughput"  << ": " << throughputMB   << " MB/s\n";
     }
-    std::cout << "==================================================" << std::endl;
+    std::cout << "==================================================\n";
 
     return totalFailures == 0;
 }
@@ -151,17 +182,9 @@ void ProcessManagement::workerFunc(const unsigned char key[crypto_secretstream_x
             fs::path outputPath;
             bool success = false;
 
-            std::error_code sizeEc;
-            const auto fileSize = fs::file_size(inputPath, sizeEc);
-            const std::uint64_t inputSize = sizeEc ? 0 : static_cast<std::uint64_t>(fileSize);
-
             if (taskToExecute->action == Action::ENCRYPT) {
                 outputPath = fs::path(inputPath.native() + fs::path(".nex").native());
-                {
-                    std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-                    std::cout << "[Worker] Encrypting: " << safePathString(inputPath.filename()) << '\n';
-                }
-                success = encryptFile(inputPath, outputPath, key, plainBuf, cipherBuf);
+                success = encryptFile(inputPath, outputPath, key, plainBuf, cipherBuf, &bytesProcessed);
 
                 if (!success) {
                     std::error_code removeEc;
@@ -173,11 +196,7 @@ void ProcessManagement::workerFunc(const unsigned char key[crypto_secretstream_x
             } else {
                 outputPath = inputPath;
                 outputPath.replace_extension("");
-                {
-                    std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-                    std::cout << "[Worker] Decrypting: " << safePathString(inputPath.filename()) << '\n';
-                }
-                success = decryptFile(inputPath, outputPath, key, cipherBuf, plainBuf);
+                success = decryptFile(inputPath, outputPath, key, cipherBuf, plainBuf, &bytesProcessed);
 
                 if (!success) {
                     std::error_code removeEc;
@@ -190,7 +209,6 @@ void ProcessManagement::workerFunc(const unsigned char key[crypto_secretstream_x
 
             if (success) {
                 filesProcessed.fetch_add(1, std::memory_order_relaxed);
-                bytesProcessed.fetch_add(inputSize, std::memory_order_relaxed);
             } else {
                 failures.fetch_add(1, std::memory_order_relaxed);
                 std::lock_guard<std::mutex> lock(getApplicationLogMutex());

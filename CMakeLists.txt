@@ -51,6 +51,7 @@ set(SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/app/encryptDecrypt/Cryption.cpp
     ${PROJECT_SOURCE_DIR}/src/app/fileHandling/IO.cpp
     ${PROJECT_SOURCE_DIR}/src/app/processes/ProcessManagement.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/processes/ProgressReporter.cpp
 )
 
 add_executable(nexcrypt ${SRC_FILES})

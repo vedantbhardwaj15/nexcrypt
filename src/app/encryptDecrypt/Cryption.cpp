@@ -20,16 +20,21 @@ namespace
 {
     namespace fs = std::filesystem;
 
-    // Header Magic: 9-byte identifier for NEXCRYPT v2 (v3.0.0+) format
+    // Header Magic: 9-byte identifier for NEXCRYPT v2 format
     constexpr std::array<char, 9> MAGIC = {'N', 'E', 'X', 'C', 'R', 'Y', 'P', 'T', '2'};
 
-    // Legacy Header Magic: NEXCRYPT1 identifier used in v1.x - v2.0.2 releases
+    // Legacy magic identifiers — kept for clear error messages on old files.
     constexpr std::array<char, 9> LEGACY_MAGIC_V1 = {'N', 'E', 'X', 'C', 'R', 'Y', 'P', 'T', '1'};
 
     // Per-file salt length (16 bytes = 128-bit entropy for BLAKE2b subkey derivation)
     constexpr std::size_t FILE_SALT_BYTES = 16;
 
-    // Chunk size constants are defined in Cryption.hpp as NEXCRYPT_PLAIN_CHUNK_SIZE / NEXCRYPT_CIPHER_CHUNK_SIZE
+    // Bytes reserved in the header to store the plain chunk size (uint32_t, little-endian).
+    constexpr std::size_t CHUNK_SIZE_BYTES = 4;
+
+    // Allowed chunk size boundaries for validation.
+    constexpr std::uint32_t MIN_CHUNK = 4 * 1024;          // 4 KB
+    constexpr std::uint32_t MAX_CHUNK = 16 * 1024 * 1024;  // 16 MB
 
     // Master salt for deriving the session master key from user password via Argon2id
     constexpr unsigned char MASTER_SALT[crypto_pwhash_SALTBYTES] = {
@@ -137,7 +142,8 @@ bool deriveKeyFromPassword(const std::string &password, unsigned char key[crypto
 // Encrypt a single file using XChaCha20-Poly1305 chunked secretstream
 bool encryptFile(const fs::path &inputPath, const fs::path &outputPath,
                  const unsigned char masterKey[crypto_secretstream_xchacha20poly1305_KEYBYTES],
-                 std::vector<unsigned char> &plainBuf, std::vector<unsigned char> &cipherBuf)
+                 std::vector<unsigned char> &plainBuf, std::vector<unsigned char> &cipherBuf,
+                 std::atomic<std::uint64_t> *bytesProcessed)
 {
     if (!initializeCrypto())
     {
@@ -194,13 +200,26 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath,
         return false;
     }
 
-    // 4. Pack entire 49-byte header into a single write call
-    // Layout: [ MAGIC (9B) ] [ FILE_SALT (16B) ] [ STREAM_HEADER (24B) ]
-    constexpr std::size_t FULL_HEADER_SIZE = MAGIC.size() + FILE_SALT_BYTES + crypto_secretstream_xchacha20poly1305_HEADERBYTES;
+    // 4. Pack the 53-byte header into a single write call.
+    // Layout: [ MAGIC (9B) ] [ PLAIN_CHUNK_SIZE (4B, LE uint32_t) ] [ FILE_SALT (16B) ] [ STREAM_HEADER (24B) ]
+    constexpr std::size_t FULL_HEADER_SIZE =
+        MAGIC.size() + CHUNK_SIZE_BYTES + FILE_SALT_BYTES +
+        crypto_secretstream_xchacha20poly1305_HEADERBYTES;
     unsigned char fullHeader[FULL_HEADER_SIZE];
+
+    // Magic.
     std::memcpy(fullHeader, MAGIC.data(), MAGIC.size());
-    std::memcpy(fullHeader + MAGIC.size(), fileSalt, FILE_SALT_BYTES);
-    std::memcpy(fullHeader + MAGIC.size() + FILE_SALT_BYTES, header, sizeof header);
+
+    // Embed plain chunk size as little-endian uint32_t so decryption is always exact.
+    const std::uint32_t chunkBytes = static_cast<std::uint32_t>(plainBuf.size());
+    fullHeader[MAGIC.size() + 0] = static_cast<unsigned char>( chunkBytes        & 0xFFu);
+    fullHeader[MAGIC.size() + 1] = static_cast<unsigned char>((chunkBytes >>  8) & 0xFFu);
+    fullHeader[MAGIC.size() + 2] = static_cast<unsigned char>((chunkBytes >> 16) & 0xFFu);
+    fullHeader[MAGIC.size() + 3] = static_cast<unsigned char>((chunkBytes >> 24) & 0xFFu);
+
+    // File salt and secretstream header.
+    std::memcpy(fullHeader + MAGIC.size() + CHUNK_SIZE_BYTES, fileSalt, FILE_SALT_BYTES);
+    std::memcpy(fullHeader + MAGIC.size() + CHUNK_SIZE_BYTES + FILE_SALT_BYTES, header, sizeof header);
 
     if (!writeBytes(out, fullHeader, sizeof fullHeader))
     {
@@ -223,6 +242,11 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath,
             std::cerr << "[I/O Error] Failed reading input data stream from: " << inputPath.string() << '\n';
             success = false;
             break;
+        }
+
+        if (bytesProcessed && bytesRead > 0)
+        {
+            bytesProcessed->fetch_add(static_cast<std::uint64_t>(bytesRead), std::memory_order_relaxed);
         }
 
         const bool finalChunk = in.eof();
@@ -274,7 +298,8 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath,
 // Decrypt a single file and verify authenticated tag chunks
 bool decryptFile(const fs::path &inputPath, const fs::path &outputPath,
                  const unsigned char masterKey[crypto_secretstream_xchacha20poly1305_KEYBYTES],
-                 std::vector<unsigned char> &cipherBuf, std::vector<unsigned char> &plainBuf)
+                 std::vector<unsigned char> &cipherBuf, std::vector<unsigned char> &plainBuf,
+                 std::atomic<std::uint64_t> *bytesProcessed)
 {
     if (!initializeCrypto())
     {
@@ -308,13 +333,13 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath,
     unsigned char header[crypto_secretstream_xchacha20poly1305_HEADERBYTES];
     crypto_secretstream_xchacha20poly1305_state state;
 
-    // 1. Read and verify Magic Header
+    // 1. Read and verify magic.
     in.read(magic.data(), static_cast<std::streamsize>(magic.size()));
 
     if (!in.good())
     {
-        std::cerr << "[Format Error] Unable to read magic header from file: " << inputPath.string() 
-                  << " (file size is less than 9 bytes)" << '\n';
+        std::cerr << "[Format Error] Unable to read magic header from file: " << inputPath.string()
+                  << " (file is too small)" << '\n';
         out.close();
         fs::remove(tempOutputPath, ec);
         return false;
@@ -322,8 +347,8 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath,
 
     if (magic == LEGACY_MAGIC_V1)
     {
-        std::cerr << "[Format Error] File '" << inputPath.filename().string() 
-                  << "' uses legacy format NEXCRYPT1 (v2.0.2 or older). NEXCRYPT1 files are unsupported in v3.0.0+." << '\n';
+        std::cerr << "[Format Error] '" << inputPath.filename().string()
+                  << "' uses legacy format NEXCRYPT1. Re-encrypt with the current version." << '\n';
         out.close();
         fs::remove(tempOutputPath, ec);
         return false;
@@ -331,21 +356,55 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath,
 
     if (magic != MAGIC)
     {
-        std::cerr << "[Format Error] Invalid magic identifier in '" << inputPath.filename().string() 
-                  << "'. Expected 'NEXCRYPT2' header." << '\n';
+        std::cerr << "[Format Error] Unrecognised magic in '" << inputPath.filename().string()
+                  << "'. Expected NEXCRYPT2 header." << '\n';
         out.close();
         fs::remove(tempOutputPath, ec);
         return false;
     }
 
-    // 2. Read per-file salt (16B) and secretstream header (24B) in a single packed read (40B total)
-    constexpr std::size_t REMAINING_HEADER_SIZE = FILE_SALT_BYTES + crypto_secretstream_xchacha20poly1305_HEADERBYTES;
+    // 2. Read the plain chunk size stored at encryption time (4 bytes, LE uint32_t).
+    unsigned char chunkSizeLE[CHUNK_SIZE_BYTES];
+    if (!readBytes(in, chunkSizeLE, CHUNK_SIZE_BYTES))
+    {
+        std::cerr << "[Format Error] Header truncated in '" << inputPath.filename().string()
+                  << "' (could not read chunk size field)." << '\n';
+        out.close();
+        fs::remove(tempOutputPath, ec);
+        return false;
+    }
+
+    const std::uint32_t storedChunkBytes =
+        (static_cast<std::uint32_t>(chunkSizeLE[0])      ) |
+        (static_cast<std::uint32_t>(chunkSizeLE[1]) <<  8) |
+        (static_cast<std::uint32_t>(chunkSizeLE[2]) << 16) |
+        (static_cast<std::uint32_t>(chunkSizeLE[3]) << 24);
+
+    if (storedChunkBytes < MIN_CHUNK || storedChunkBytes > MAX_CHUNK)
+    {
+        std::cerr << "[Format Error] Invalid chunk size in file header.\n";
+        out.close();
+        fs::remove(tempOutputPath, ec);
+        return false;
+    }
+
+    // Resize caller-provided buffers to the exact chunk size used at encryption time.
+    // Same-size case: vector::resize is a documented no-op — zero cost.
+    // Different-size case: one realloc per file; the worker reuses the resized buffer for the rest of the session.
+    const std::size_t storedPlainSize  = static_cast<std::size_t>(storedChunkBytes);
+    const std::size_t storedCipherSize = storedPlainSize + crypto_secretstream_xchacha20poly1305_ABYTES;
+    if (cipherBuf.size() != storedCipherSize) cipherBuf.resize(storedCipherSize);
+    if (plainBuf.size()  != storedPlainSize)  plainBuf.resize(storedPlainSize);
+
+    // 3. Read per-file salt (16B) and secretstream header (24B) in a single packed read (40B).
+    constexpr std::size_t REMAINING_HEADER_SIZE =
+        FILE_SALT_BYTES + crypto_secretstream_xchacha20poly1305_HEADERBYTES;
     unsigned char remainingHeader[REMAINING_HEADER_SIZE];
 
     if (!readBytes(in, remainingHeader, sizeof remainingHeader))
     {
-        std::cerr << "[Format Error] Header truncated in '" << inputPath.filename().string() 
-                  << "' (file damaged or incomplete, expected 49-byte header)." << '\n';
+        std::cerr << "[Format Error] Header truncated in '" << inputPath.filename().string()
+                  << "' (expected 53-byte header)." << '\n';
         out.close();
         fs::remove(tempOutputPath, ec);
         return false;
@@ -353,6 +412,11 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath,
 
     std::memcpy(fileSalt, remainingHeader, FILE_SALT_BYTES);
     std::memcpy(header, remainingHeader + FILE_SALT_BYTES, sizeof header);
+
+    if (bytesProcessed)
+    {
+        bytesProcessed->fetch_add(MAGIC.size() + CHUNK_SIZE_BYTES + REMAINING_HEADER_SIZE, std::memory_order_relaxed);
+    }
 
     // 3. Re-derive per-file key using Master Key and file salt
     unsigned char fileKey[crypto_secretstream_xchacha20poly1305_KEYBYTES];
@@ -390,6 +454,11 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath,
                       << inputPath.filename().string() << '\n';
             success = false;
             break;
+        }
+
+        if (bytesProcessed && bytesRead > 0)
+        {
+            bytesProcessed->fetch_add(static_cast<std::uint64_t>(bytesRead), std::memory_order_relaxed);
         }
 
         if (bytesRead < static_cast<std::streamsize>(crypto_secretstream_xchacha20poly1305_ABYTES) ||

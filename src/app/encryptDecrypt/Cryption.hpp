@@ -1,6 +1,8 @@
 #ifndef CRYPTION_HPP
 #define CRYPTION_HPP
 
+#include <atomic>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -16,11 +18,13 @@ bool deriveKeyFromPassword(const std::string &password, unsigned char key[crypto
 
 bool encryptFile(const std::filesystem::path &inputPath, const std::filesystem::path &outputPath,
                  const unsigned char key[crypto_secretstream_xchacha20poly1305_KEYBYTES],
-                 std::vector<unsigned char> &plainBuf, std::vector<unsigned char> &cipherBuf);
+                 std::vector<unsigned char> &plainBuf, std::vector<unsigned char> &cipherBuf,
+                 std::atomic<std::uint64_t> *bytesProcessed = nullptr);
 
 bool decryptFile(const std::filesystem::path &inputPath, const std::filesystem::path &outputPath,
                  const unsigned char key[crypto_secretstream_xchacha20poly1305_KEYBYTES],
-                 std::vector<unsigned char> &cipherBuf, std::vector<unsigned char> &plainBuf);
+                 std::vector<unsigned char> &cipherBuf, std::vector<unsigned char> &plainBuf,
+                 std::atomic<std::uint64_t> *bytesProcessed = nullptr);
 
 #endif
 

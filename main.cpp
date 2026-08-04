@@ -1,5 +1,7 @@
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -152,24 +154,22 @@ int main() {
     }
 
     std::size_t chunkSizeKB = 256;
-    std::cout << "Enter chunk size in KB (default 256): ";
-    std::string chunkInput;
-    std::getline(std::cin, chunkInput);
-    try {
-        if (!chunkInput.empty()) {
-            std::size_t parsed = std::stoull(chunkInput);
-            if (parsed > 0) {
-                chunkSizeKB = parsed;
+    if (action == "ENCRYPT") {
+        std::cout << "Enter chunk size in KB (default 256): ";
+        std::string chunkInput;
+        std::getline(std::cin, chunkInput);
+        try {
+            if (!chunkInput.empty()) {
+                std::size_t parsed = std::stoull(chunkInput);
+                if (parsed > 0) {
+                    chunkSizeKB = parsed;
+                }
             }
+        } catch (...) {
+            chunkSizeKB = 256;
         }
-    } catch (...) {
-        chunkSizeKB = 256;
     }
 
-    {
-        std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-        std::cout << "Using " << numWorkers << " parallel worker threads with " << chunkSizeKB << " KB chunk size." << std::endl;
-    }
 
     const fs::path target(pathInput);
 
@@ -181,10 +181,24 @@ int main() {
         if (fs::is_regular_file(target, isRegEc)) {
             if (shouldProcessFile(target, action)) {
                 Action taskAction = (action == "ENCRYPT") ? Action::ENCRYPT : Action::DECRYPT;
-                auto task = std::make_unique<Task>(taskAction, target);
+                std::error_code szEc;
+                const auto rawSize = fs::file_size(target, szEc);
+                const std::uint64_t fsz = szEc ? 0 : static_cast<std::uint64_t>(rawSize);
+                auto task = std::make_unique<Task>(taskAction, target, fsz);
                 pm.submitToQueue(std::move(task));
                 fileCount++;
+
+                char sizeStr[20];
+                if (fsz >= (std::uint64_t)1024*1024*1024)
+                    std::snprintf(sizeStr, sizeof sizeStr, "%.2f GB", (double)fsz/(1024.0*1024*1024));
+                else if (fsz >= (std::uint64_t)1024*1024)
+                    std::snprintf(sizeStr, sizeof sizeStr, "%.2f MB", (double)fsz/(1024.0*1024));
+                else
+                    std::snprintf(sizeStr, sizeof sizeStr, "%.2f KB", (double)fsz/1024.0);
+                std::cout << "Found: 1 file (" << sizeStr << ")\n\n";
             }
+            const char* verb = (action == "ENCRYPT") ? "Encrypting" : "Decrypting";
+            std::cout << verb << "...\n\n";
             const bool success = pm.executeTasks(password, preserveOriginals);
             scrubPassword(password);
             return success ? 0 : 1;
@@ -192,14 +206,15 @@ int main() {
 
         std::error_code isDirEc;
         if (fs::is_directory(target, isDirEc)) {
+            std::cout << "Scanning directory...\n";
             std::error_code ec;
             fs::recursive_directory_iterator it(target, fs::directory_options::skip_permission_denied, ec);
             fs::recursive_directory_iterator end;
+            std::uint64_t totalSizeForDisplay = 0;
 
             for (; it != end; it.increment(ec)) {
                 if (ec) {
-                    std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-                    std::cerr << "Warning: could not access a directory entry: " << ec.message() << std::endl;
+                    std::cerr << "Warning: could not access a directory entry: " << ec.message() << '\n';
                     ec.clear();
                     continue;
                 }
@@ -208,9 +223,7 @@ int main() {
                     std::error_code entryEc;
                     const fs::directory_entry &entry = *it;
                     if (!entry.is_regular_file(entryEc)) {
-                        if (entryEc) {
-                            entryEc.clear();
-                        }
+                        if (entryEc) { entryEc.clear(); }
                         continue;
                     }
 
@@ -219,22 +232,32 @@ int main() {
                     }
 
                     Action taskAction = (action == "ENCRYPT") ? Action::ENCRYPT : Action::DECRYPT;
-                    auto task = std::make_unique<Task>(taskAction, entry.path());
+                    // directory_entry::file_size() returns the cached size — no extra stat() call.
+                    std::error_code szEc;
+                    const auto rawSize = entry.file_size(szEc);
+                    const std::uint64_t fsz = szEc ? 0 : static_cast<std::uint64_t>(rawSize);
+                    totalSizeForDisplay += fsz;
+                    auto task = std::make_unique<Task>(taskAction, entry.path(), fsz);
                     pm.submitToQueue(std::move(task));
                     fileCount++;
                 } catch (const std::exception &ex) {
-                    std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-                    std::cerr << "Warning: skipping problematic file: " << ex.what() << std::endl;
+                    std::cerr << "Warning: skipping problematic file: " << ex.what() << '\n';
                 } catch (...) {
-                    std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-                    std::cerr << "Warning: skipping problematic file." << std::endl;
+                    std::cerr << "Warning: skipping problematic file.\n";
                 }
             }
 
-            {
-                std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-                std::cout << "Submitted " << fileCount << " files for processing." << std::endl;
-            }
+            char sizeStr[20];
+            if (totalSizeForDisplay >= (std::uint64_t)1024*1024*1024)
+                std::snprintf(sizeStr, sizeof sizeStr, "%.2f GB", (double)totalSizeForDisplay/(1024.0*1024*1024));
+            else if (totalSizeForDisplay >= (std::uint64_t)1024*1024)
+                std::snprintf(sizeStr, sizeof sizeStr, "%.2f MB", (double)totalSizeForDisplay/(1024.0*1024));
+            else
+                std::snprintf(sizeStr, sizeof sizeStr, "%.2f KB", (double)totalSizeForDisplay/1024.0);
+
+            std::cout << "Found: " << fileCount << " files (" << sizeStr << ")\n\n";
+            const char* verb = (action == "ENCRYPT") ? "Encrypting" : "Decrypting";
+            std::cout << verb << "...\n\n";
             const bool success = pm.executeTasks(password, preserveOriginals);
             scrubPassword(password);
             return success ? 0 : 1;
