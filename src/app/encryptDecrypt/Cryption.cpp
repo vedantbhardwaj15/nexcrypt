@@ -11,6 +11,11 @@
 #include <string>
 #include <vector>
 
+#ifdef __linux__
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 namespace
 {
     namespace fs = std::filesystem;
@@ -34,6 +39,21 @@ namespace
 
     std::once_flag g_cryptoOnceFlag;
     bool cryptoReady = false;
+
+    // Hint Linux kernel for sequential read-ahead
+    void hintSequentialRead(const fs::path &path)
+    {
+#ifdef __linux__
+        int fd = ::open(path.c_str(), O_RDONLY);
+        if (fd != -1)
+        {
+            ::posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
+            ::close(fd);
+        }
+#else
+        (void)path;
+#endif
+    }
 
     // Helper: raw binary write to output file stream
     bool writeBytes(std::ofstream &out, const unsigned char *data, std::size_t size)
@@ -138,6 +158,8 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath,
         return false;
     }
 
+    hintSequentialRead(inputPath);
+
     std::ifstream in(inputPath, std::ios::binary);
     if (!in.is_open())
     {
@@ -185,10 +207,15 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath,
         return false;
     }
 
-    // 4. Write header layout: [ MAGIC (9B) ] [ FILE_SALT (16B) ] [ STREAM_HEADER (24B) ]
-    if (!writeChars(out, MAGIC.data(), MAGIC.size()) ||
-        !writeBytes(out, fileSalt, sizeof fileSalt) ||
-        !writeBytes(out, header, sizeof header))
+    // 4. Pack entire 49-byte header into a single write call
+    // Layout: [ MAGIC (9B) ] [ FILE_SALT (16B) ] [ STREAM_HEADER (24B) ]
+    constexpr std::size_t FULL_HEADER_SIZE = MAGIC.size() + FILE_SALT_BYTES + crypto_secretstream_xchacha20poly1305_HEADERBYTES;
+    unsigned char fullHeader[FULL_HEADER_SIZE];
+    std::memcpy(fullHeader, MAGIC.data(), MAGIC.size());
+    std::memcpy(fullHeader + MAGIC.size(), fileSalt, FILE_SALT_BYTES);
+    std::memcpy(fullHeader + MAGIC.size() + FILE_SALT_BYTES, header, sizeof header);
+
+    if (!writeBytes(out, fullHeader, sizeof fullHeader))
     {
         sodium_memzero(fileKey, sizeof fileKey);
         std::cerr << "[I/O Error] Failed to write NEXCRYPT2 header to destination file: " << tempOutputPath.string() << '\n';
@@ -268,6 +295,8 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath,
         return false;
     }
 
+    hintSequentialRead(inputPath);
+
     std::ifstream in(inputPath, std::ios::binary);
     if (!in.is_open())
     {
@@ -322,9 +351,11 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath,
         return false;
     }
 
-    // 2. Read per-file salt and secretstream header
-    if (!readBytes(in, fileSalt, sizeof fileSalt) ||
-        !readBytes(in, header, sizeof header))
+    // 2. Read per-file salt (16B) and secretstream header (24B) in a single packed read (40B total)
+    constexpr std::size_t REMAINING_HEADER_SIZE = FILE_SALT_BYTES + crypto_secretstream_xchacha20poly1305_HEADERBYTES;
+    unsigned char remainingHeader[REMAINING_HEADER_SIZE];
+
+    if (!readBytes(in, remainingHeader, sizeof remainingHeader))
     {
         std::cerr << "[Format Error] Header truncated in '" << inputPath.filename().string() 
                   << "' (file damaged or incomplete, expected 49-byte header)." << '\n';
@@ -332,6 +363,9 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath,
         fs::remove(tempOutputPath, ec);
         return false;
     }
+
+    std::memcpy(fileSalt, remainingHeader, FILE_SALT_BYTES);
+    std::memcpy(header, remainingHeader + FILE_SALT_BYTES, sizeof header);
 
     // 3. Re-derive per-file key using Master Key and file salt
     unsigned char fileKey[crypto_secretstream_xchacha20poly1305_KEYBYTES];
