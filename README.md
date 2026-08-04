@@ -52,13 +52,13 @@ Pre-built binaries are available on the **[Releases](https://github.com/vedantbh
 ### 1. Extract
 
 ```bash
-unzip nexcrypt-linux-x64.zip
-cd nexcrypt-linux-x64
+tar -xzf nexcrypt-linux-amd64.tar.gz
 ```
 
 ### 2. Make executable
 
 ```bash
+cd nexcrypt-linux-amd64
 chmod +x nexcrypt
 ```
 
