@@ -4,6 +4,12 @@ project(nexcrypt LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Default to Release build if not explicitly specified
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build." FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+endif()
+
 # Threading support
 find_package(Threads REQUIRED)
 
@@ -48,6 +54,15 @@ set(SRC_FILES
 )
 
 add_executable(nexcrypt ${SRC_FILES})
+
+# Enable Link-Time Optimization (LTO / IPO) for Release builds when supported
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
+    if(ipo_supported)
+        set_target_properties(nexcrypt PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+    endif()
+endif()
 
 # MSVC windows.h defines max/min macros that break std::numeric_limits
 if(MSVC)
