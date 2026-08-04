@@ -40,20 +40,7 @@ namespace
     std::once_flag g_cryptoOnceFlag;
     bool cryptoReady = false;
 
-    // Hint Linux kernel for sequential read-ahead
-    void hintSequentialRead(const fs::path &path)
-    {
-#ifdef __linux__
-        int fd = ::open(path.c_str(), O_RDONLY);
-        if (fd != -1)
-        {
-            ::posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
-            ::close(fd);
-        }
-#else
-        (void)path;
-#endif
-    }
+
 
     // Helper: raw binary write to output file stream
     bool writeBytes(std::ofstream &out, const unsigned char *data, std::size_t size)
@@ -158,7 +145,7 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath,
         return false;
     }
 
-    hintSequentialRead(inputPath);
+
 
     std::ifstream in(inputPath, std::ios::binary);
     if (!in.is_open())
@@ -295,7 +282,7 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath,
         return false;
     }
 
-    hintSequentialRead(inputPath);
+
 
     std::ifstream in(inputPath, std::ios::binary);
     if (!in.is_open())
