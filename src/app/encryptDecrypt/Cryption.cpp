@@ -68,7 +68,7 @@ namespace
         if (ec)
         {
             std::cerr << "[Error] Failed to finalize output file target '" << outputPath.string() 
-                      << "': " << ec.message() << std::endl;
+                      << "': " << ec.message() << '\n';
             fs::remove(tempPath, ec);
             return false;
         }
@@ -109,7 +109,7 @@ bool deriveKeyFromPassword(const std::string &password, unsigned char key[crypto
 {
     if (!initializeCrypto())
     {
-        std::cerr << "[Crypto Error] Core cryptographic library (libsodium) initialization failed." << std::endl;
+        std::cerr << "[Crypto Error] Core cryptographic library (libsodium) initialization failed." << '\n';
         return false;
     }
 
@@ -122,7 +122,7 @@ bool deriveKeyFromPassword(const std::string &password, unsigned char key[crypto
                       crypto_pwhash_MEMLIMIT_INTERACTIVE,
                       crypto_pwhash_ALG_DEFAULT) != 0)
     {
-        std::cerr << "[Crypto Error] Argon2id key derivation (crypto_pwhash) failed." << std::endl;
+        std::cerr << "[Crypto Error] Argon2id key derivation (crypto_pwhash) failed." << '\n';
         return false;
     }
 
@@ -134,7 +134,7 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
 {
     if (!initializeCrypto())
     {
-        std::cerr << "[Crypto Error] Failed to initialize libsodium for file: " << inputPath.string() << std::endl;
+        std::cerr << "[Crypto Error] Failed to initialize libsodium for file: " << inputPath.string() << '\n';
         return false;
     }
 
@@ -142,7 +142,7 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
     if (!in.is_open())
     {
         std::cerr << "[I/O Error] Cannot open source file for reading: " << inputPath.string() 
-                  << " (check file existence or read permissions)" << std::endl;
+                  << " (check file existence or read permissions)" << '\n';
         return false;
     }
 
@@ -154,7 +154,7 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
     if (!out.is_open())
     {
         std::cerr << "[I/O Error] Cannot create temporary file for writing: " << tempOutputPath.string() 
-                  << " (check directory write permissions or disk space)" << std::endl;
+                  << " (check directory write permissions or disk space)" << '\n';
         return false;
     }
 
@@ -166,7 +166,7 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
     unsigned char fileKey[crypto_secretstream_xchacha20poly1305_KEYBYTES];
     if (!deriveFileKey(masterKey, fileSalt, fileKey))
     {
-        std::cerr << "[Crypto Error] BLAKE2b subkey derivation failed for file: " << inputPath.string() << std::endl;
+        std::cerr << "[Crypto Error] BLAKE2b subkey derivation failed for file: " << inputPath.string() << '\n';
         out.close();
         fs::remove(tempOutputPath, ec);
         return false;
@@ -179,7 +179,7 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
     if (crypto_secretstream_xchacha20poly1305_init_push(&state, header, fileKey) != 0)
     {
         sodium_memzero(fileKey, sizeof fileKey);
-        std::cerr << "[Crypto Error] XChaCha20-Poly1305 stream push initialization failed." << std::endl;
+        std::cerr << "[Crypto Error] XChaCha20-Poly1305 stream push initialization failed." << '\n';
         out.close();
         fs::remove(tempOutputPath, ec);
         return false;
@@ -191,7 +191,7 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
         !writeBytes(out, header, sizeof header))
     {
         sodium_memzero(fileKey, sizeof fileKey);
-        std::cerr << "[I/O Error] Failed to write NEXCRYPT2 header to destination file: " << tempOutputPath.string() << std::endl;
+        std::cerr << "[I/O Error] Failed to write NEXCRYPT2 header to destination file: " << tempOutputPath.string() << '\n';
         out.close();
         fs::remove(tempOutputPath, ec);
         return false;
@@ -209,7 +209,7 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
 
         if (bytesRead < 0 || (!in.eof() && in.fail()))
         {
-            std::cerr << "[I/O Error] Failed reading input data stream from: " << inputPath.string() << std::endl;
+            std::cerr << "[I/O Error] Failed reading input data stream from: " << inputPath.string() << '\n';
             success = false;
             break;
         }
@@ -229,14 +229,14 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
 
         if (pushResult != 0)
         {
-            std::cerr << "[Crypto Error] XChaCha20-Poly1305 chunk encryption failed." << std::endl;
+            std::cerr << "[Crypto Error] XChaCha20-Poly1305 chunk encryption failed." << '\n';
             success = false;
             break;
         }
 
         if (!writeBytes(out, cipher.data(), static_cast<std::size_t>(cipherLength)))
         {
-            std::cerr << "[I/O Error] Failed writing encrypted chunk to disk (disk full or write error)." << std::endl;
+            std::cerr << "[I/O Error] Failed writing encrypted chunk to disk (disk full or write error)." << '\n';
             success = false;
             break;
         }
@@ -265,7 +265,7 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
 {
     if (!initializeCrypto())
     {
-        std::cerr << "[Crypto Error] Failed to initialize libsodium for decryption." << std::endl;
+        std::cerr << "[Crypto Error] Failed to initialize libsodium for decryption." << '\n';
         return false;
     }
 
@@ -273,7 +273,7 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
     if (!in.is_open())
     {
         std::cerr << "[I/O Error] Cannot open encrypted file for reading: " << inputPath.string() 
-                  << " (file missing or permission denied)" << std::endl;
+                  << " (file missing or permission denied)" << '\n';
         return false;
     }
 
@@ -284,7 +284,7 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
     std::ofstream out(tempOutputPath, std::ios::binary | std::ios::trunc);
     if (!out.is_open())
     {
-        std::cerr << "[I/O Error] Cannot create temporary file for decrypted output: " << tempOutputPath.string() << std::endl;
+        std::cerr << "[I/O Error] Cannot create temporary file for decrypted output: " << tempOutputPath.string() << '\n';
         return false;
     }
 
@@ -299,7 +299,7 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
     if (!in.good())
     {
         std::cerr << "[Format Error] Unable to read magic header from file: " << inputPath.string() 
-                  << " (file size is less than 9 bytes)" << std::endl;
+                  << " (file size is less than 9 bytes)" << '\n';
         out.close();
         fs::remove(tempOutputPath, ec);
         return false;
@@ -308,7 +308,7 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
     if (magic == LEGACY_MAGIC_V1)
     {
         std::cerr << "[Format Error] File '" << inputPath.filename().string() 
-                  << "' uses legacy format NEXCRYPT1 (v2.0.2 or older). NEXCRYPT1 files are unsupported in v3.0.0+." << std::endl;
+                  << "' uses legacy format NEXCRYPT1 (v2.0.2 or older). NEXCRYPT1 files are unsupported in v3.0.0+." << '\n';
         out.close();
         fs::remove(tempOutputPath, ec);
         return false;
@@ -317,7 +317,7 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
     if (magic != MAGIC)
     {
         std::cerr << "[Format Error] Invalid magic identifier in '" << inputPath.filename().string() 
-                  << "'. Expected 'NEXCRYPT2' header." << std::endl;
+                  << "'. Expected 'NEXCRYPT2' header." << '\n';
         out.close();
         fs::remove(tempOutputPath, ec);
         return false;
@@ -328,7 +328,7 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
         !readBytes(in, header, sizeof header))
     {
         std::cerr << "[Format Error] Header truncated in '" << inputPath.filename().string() 
-                  << "' (file damaged or incomplete, expected 49-byte header)." << std::endl;
+                  << "' (file damaged or incomplete, expected 49-byte header)." << '\n';
         out.close();
         fs::remove(tempOutputPath, ec);
         return false;
@@ -338,7 +338,7 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
     unsigned char fileKey[crypto_secretstream_xchacha20poly1305_KEYBYTES];
     if (!deriveFileKey(masterKey, fileSalt, fileKey))
     {
-        std::cerr << "[Crypto Error] Failed to derive per-file key for: " << inputPath.string() << std::endl;
+        std::cerr << "[Crypto Error] Failed to derive per-file key for: " << inputPath.string() << '\n';
         out.close();
         fs::remove(tempOutputPath, ec);
         return false;
@@ -348,7 +348,7 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
     if (crypto_secretstream_xchacha20poly1305_init_pull(&state, header, fileKey) != 0)
     {
         sodium_memzero(fileKey, sizeof fileKey);
-        std::cerr << "[Crypto Error] XChaCha20-Poly1305 pull initialization failed for: " << inputPath.string() << std::endl;
+        std::cerr << "[Crypto Error] XChaCha20-Poly1305 pull initialization failed for: " << inputPath.string() << '\n';
         out.close();
         fs::remove(tempOutputPath, ec);
         return false;
@@ -369,7 +369,7 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
         if (bytesRead == 0)
         {
             std::cerr << "[Corrupt File Error] Encrypted file ended unexpectedly before final block was read: " 
-                      << inputPath.filename().string() << std::endl;
+                      << inputPath.filename().string() << '\n';
             success = false;
             break;
         }
@@ -377,7 +377,7 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
         if (bytesRead < static_cast<std::streamsize>(crypto_secretstream_xchacha20poly1305_ABYTES) ||
             (!in.eof() && in.fail()))
         {
-            std::cerr << "[Format Error] Invalid encrypted chunk size in: " << inputPath.filename().string() << std::endl;
+            std::cerr << "[Format Error] Invalid encrypted chunk size in: " << inputPath.filename().string() << '\n';
             success = false;
             break;
         }
@@ -394,14 +394,14 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
                 0) != 0)
         {
             std::cerr << "[Auth Error] Decryption/Authentication failed for: " << inputPath.filename().string() 
-                      << " (incorrect password or corrupted/tampered ciphertext)." << std::endl;
+                      << " (incorrect password or corrupted/tampered ciphertext)." << '\n';
             success = false;
             break;
         }
 
         if (!writeBytes(out, plain.data(), static_cast<std::size_t>(plainLength)))
         {
-            std::cerr << "[I/O Error] Failed writing decrypted plaintext to disk." << std::endl;
+            std::cerr << "[I/O Error] Failed writing decrypted plaintext to disk." << '\n';
             success = false;
             break;
         }
@@ -410,7 +410,7 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath, const un
         if (sawFinal && in.peek() != std::char_traits<char>::eof())
         {
             std::cerr << "[Format Error] Trailing extra data detected after final chunk in: " 
-                      << inputPath.filename().string() << std::endl;
+                      << inputPath.filename().string() << '\n';
             success = false;
             break;
         }
