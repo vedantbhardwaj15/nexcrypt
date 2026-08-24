@@ -17,7 +17,7 @@ inline std::string safePathString(const std::filesystem::path &p) {
     } catch (...) {
         try {
             const auto u8 = p.u8string();
-            return std::string(reinterpret_cast<const char *>(u8.data()), u8.size());
+            return std::string(reinterpret_cast<const char *>(u8.data()), u8.size()); // pointer to the utf 8 bytes and treat them as read only char bytes.
         } catch (...) {
             return "<unprintable path>";
         }

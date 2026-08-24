@@ -1,5 +1,6 @@
 #include "ProcessManagement.hpp"
 
+#include "../common/Colors.hpp"
 #include "../encryptDecrypt/Cryption.hpp"
 #include "ProgressReporter.hpp"
 
@@ -64,7 +65,7 @@ bool ProcessManagement::executeTasks(const std::string &password, bool preserveO
 
     unsigned char key[crypto_secretstream_xchacha20poly1305_KEYBYTES];
     if (!deriveKeyFromPassword(password, key)) {
-        std::cerr << "ERROR: Failed to derive encryption key from password." << '\n';
+        std::cerr << Color::BoldRed << "ERROR: " << Color::Reset << "Failed to derive encryption key from password." << '\n';
         return false;
     }
 
@@ -114,9 +115,13 @@ bool ProcessManagement::executeTasks(const std::string &password, bool preserveO
     const double bytesInMB = bytesInKB / 1024.0;
     const double bytesInGB = bytesInMB / 1024.0;
 
-    std::cout << "\n==================================================\n";
-    std::cout << "PROCESSING COMPLETE\n";
-    std::cout << "==================================================\n";
+    std::cout << '\n' << Color::Gray << "==================================================" << Color::Reset << '\n';
+    if (totalFailures == 0) {
+        std::cout << Color::BoldGreen << "PROCESSING COMPLETE" << Color::Reset << '\n';
+    } else {
+        std::cout << Color::BoldRed << "PROCESSING COMPLETED WITH FAILURES" << Color::Reset << '\n';
+    }
+    std::cout << Color::Gray << "==================================================" << Color::Reset << '\n';
 
     // Format data processed in human-readable units.
     char dataBuf[20];
@@ -128,18 +133,22 @@ bool ProcessManagement::executeTasks(const std::string &password, bool preserveO
         std::snprintf(dataBuf, sizeof dataBuf, "%.2f KB", bytesInKB);
 
     std::cout << std::left;
-    std::cout << std::setw(16) << "Files processed" << ": " << totalProcessed << '\n';
-    std::cout << std::setw(16) << "Failures"        << ": " << totalFailures  << '\n';
-    std::cout << std::setw(16) << "Data processed"  << ": " << dataBuf        << '\n';
-    std::cout << std::setw(16) << "Worker threads"  << ": " << numWorkers     << '\n';
-    std::cout << std::setw(16) << "Chunk size"      << ": " << chunkSizeKB    << " KB\n";
+    std::cout << std::setw(16) << "Files processed" << Color::Gray << ": " << Color::Reset << Color::Bold << totalProcessed << Color::Reset << '\n';
+    if (totalFailures == 0) {
+        std::cout << std::setw(16) << "Failures"        << Color::Gray << ": " << Color::Reset << Color::Green << "0" << Color::Reset << '\n';
+    } else {
+        std::cout << std::setw(16) << "Failures"        << Color::Gray << ": " << Color::Reset << Color::BoldRed << totalFailures << Color::Reset << '\n';
+    }
+    std::cout << std::setw(16) << "Data processed"  << Color::Gray << ": " << Color::Reset << Color::Bold << dataBuf        << Color::Reset << '\n';
+    std::cout << std::setw(16) << "Worker threads"  << Color::Gray << ": " << Color::Reset << Color::Bold << numWorkers     << Color::Reset << '\n';
+    std::cout << std::setw(16) << "Chunk size"      << Color::Gray << ": " << Color::Reset << Color::Bold << chunkSizeKB    << " KB" << Color::Reset << '\n';
     std::cout << std::fixed << std::setprecision(1);
-    std::cout << std::setw(16) << "Time"            << ": " << elapsedTime    << " s\n";
+    std::cout << std::setw(16) << "Time"            << Color::Gray << ": " << Color::Reset << Color::Bold << elapsedTime    << " s" << Color::Reset << '\n';
     if (elapsedTime > 0.0) {
         const double throughputMB = (static_cast<double>(totalBytesProc) / (1024.0 * 1024.0)) / elapsedTime;
-        std::cout << std::setw(16) << "Throughput"  << ": " << throughputMB   << " MB/s\n";
+        std::cout << std::setw(16) << "Throughput"  << Color::Gray << ": " << Color::Reset << Color::BoldCyan << throughputMB   << " MB/s" << Color::Reset << '\n';
     }
-    std::cout << "==================================================\n";
+    std::cout << Color::Gray << "==================================================" << Color::Reset << '\n';
 
     return totalFailures == 0;
 }
@@ -212,16 +221,16 @@ void ProcessManagement::workerFunc(const unsigned char key[crypto_secretstream_x
             } else {
                 failures.fetch_add(1, std::memory_order_relaxed);
                 std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-                std::cerr << "ERROR: Failed to process file: " << safePathString(inputPath) << '\n';
+                std::cerr << Color::BoldRed << "ERROR: " << Color::Reset << "Failed to process file: " << safePathString(inputPath) << '\n';
             }
         } catch (const std::exception &ex) {
             failures.fetch_add(1, std::memory_order_relaxed);
             std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-            std::cerr << "[Warning] Skipping file due to error: " << ex.what() << '\n';
+            std::cerr << Color::BoldYellow << "[Warning] " << Color::Reset << "Skipping file due to error: " << ex.what() << '\n';
         } catch (...) {
             failures.fetch_add(1, std::memory_order_relaxed);
             std::lock_guard<std::mutex> lock(getApplicationLogMutex());
-            std::cerr << "[Warning] Skipping file due to unknown exception." << '\n';
+            std::cerr << Color::BoldYellow << "[Warning] " << Color::Reset << "Skipping file due to unknown exception." << '\n';
         }
     }
 }

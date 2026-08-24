@@ -12,17 +12,30 @@ constexpr int BAR_CELLS = 20;
 constexpr char FILLED_BYTES[4] = "\xe2\x96\x88"; // █
 constexpr char EMPTY_BYTES[4]  = "\xe2\x96\x91"; // ░
 
-// Build a BAR_CELLS-wide Unicode progress bar into `out` (must be ≥ BAR_CELLS*3+1 bytes).
+// Build a BAR_CELLS-wide Unicode progress bar into `out` (must be ≥ BAR_CELLS*3+32 bytes).
 // Returns byte length written (not counting the null terminator).
 int buildBar(char* out, int filledCells) noexcept {
     char* p = out;
-    for (int i = 0; i < BAR_CELLS; ++i) {
-        const char* src = (i < filledCells) ? FILLED_BYTES : EMPTY_BYTES;
-        p[0] = src[0]; p[1] = src[1]; p[2] = src[2];
-        p += 3;
+    if (filledCells > 0) {
+        std::memcpy(p, "\033[36m", 5); // Cyan for filled portion
+        p += 5;
+        for (int i = 0; i < filledCells; ++i) {
+            p[0] = FILLED_BYTES[0]; p[1] = FILLED_BYTES[1]; p[2] = FILLED_BYTES[2];
+            p += 3;
+        }
     }
+    if (filledCells < BAR_CELLS) {
+        std::memcpy(p, "\033[90m", 5); // Muted gray for empty portion
+        p += 5;
+        for (int i = filledCells; i < BAR_CELLS; ++i) {
+            p[0] = EMPTY_BYTES[0]; p[1] = EMPTY_BYTES[1]; p[2] = EMPTY_BYTES[2];
+            p += 3;
+        }
+    }
+    std::memcpy(p, "\033[0m", 4); // Reset
+    p += 4;
     *p = '\0';
-    return BAR_CELLS * 3;
+    return static_cast<int>(p - out);
 }
 
 // Format a duration (seconds) into a compact string.  `buf` must be ≥ 16 bytes.
@@ -86,17 +99,16 @@ void ProgressReporter::stop() {
 // ---------------------------------------------------------------------------
 void ProgressReporter::run() noexcept {
     // Stack-only storage — zero heap in the render loop.
-    char lineBuf[256];
-    char prevBuf[256];
+    char lineBuf[512];
+    char prevBuf[512];
     prevBuf[0] = '\0';
 
-    char barBuf[BAR_CELLS * 3 + 1]; // UTF-8 bar
-    char dataBuf[40];               // "X.XX/Y.YY GB"
-    char tputStr[20];               // "XXX.X MB/s"
-    char elapsedStr[16];            // "XXs" / "Xm00s"
+    char barBuf[BAR_CELLS * 3 + 32]; // UTF-8 bar with ANSI color escapes
+    char dataBuf[40];                // "X.XX/Y.YY GB"
+    char tputStr[20];                // "XXX.X MB/s"
+    char elapsedStr[16];             // "XXs" / "Xm00s"
 
-    int prevByteLen      = 0;
-    int prevDisplayWidth = 0;
+    int prevByteLen = 0;
 
     // -----------------------------------------------------------------------
     // Precompute the data unit from totalBytes_ — it never changes, so we
@@ -164,10 +176,10 @@ void ProgressReporter::run() noexcept {
         // 8. Elapsed string.
         fmtTime(elapsedStr, sizeof elapsedStr, elapsed);
 
-        // 9. Assemble full line.
+        // 9. Assemble full line with mature, high-contrast CLI styling.
         // Format: [bar] PCT% | N/N | X.XX/Y.YY UNIT | TPUT | ELAPSEDs
         const int byteLen = std::snprintf(lineBuf, sizeof lineBuf,
-            "[%s] %3.0f%% | %llu/%llu | %s | %s | %s%s",
+            "\033[90m[\033[0m%s\033[90m]\033[0m \033[1m%3.0f%%\033[0m \033[90m|\033[0m %llu/%llu \033[90m|\033[0m %s \033[90m|\033[0m \033[36m%s\033[0m \033[90m|\033[0m %s%s",
             barBuf,
             pct,
             static_cast<unsigned long long>(files),
@@ -175,7 +187,7 @@ void ProgressReporter::run() noexcept {
             dataBuf,
             tputStr,
             elapsedStr,
-            (fails > 0) ? " [!]" : "");
+            (fails > 0) ? " \033[1;31m[!]\033[0m" : "");
 
         if (byteLen <= 0) return;
 
@@ -185,26 +197,14 @@ void ProgressReporter::run() noexcept {
             return;
         }
 
-        // 11. Compute display width.
-        // Each bar cell: 3 UTF-8 bytes but 1 terminal column.
-        // Subtract 2 per cell to convert byte length → column count.
-        const int displayWidth = byteLen - BAR_CELLS * 2;
-
-        // 12. Write to stdout.
-        std::fwrite("\r", 1, 1, stdout);
+        // 11. Write to stdout using ANSI clear-to-end-of-line (\r\033[K).
+        std::fwrite("\r\033[K", 1, 4, stdout);
         std::fwrite(lineBuf, 1, static_cast<std::size_t>(byteLen), stdout);
-
-        // Erase stale characters if this render is narrower than the last.
-        if (displayWidth < prevDisplayWidth) {
-            for (int i = displayWidth; i < prevDisplayWidth; ++i) std::fputc(' ', stdout);
-        }
-
         std::fflush(stdout);
 
-        // 13. Update previous state.
+        // 12. Update previous state.
         std::memcpy(prevBuf, lineBuf, static_cast<std::size_t>(byteLen) + 1);
-        prevByteLen      = byteLen;
-        prevDisplayWidth = displayWidth;
+        prevByteLen = byteLen;
     };
 
     // -----------------------------------------------------------------------

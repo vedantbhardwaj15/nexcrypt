@@ -1,7 +1,6 @@
 #ifndef PROCESS_MANAGEMENT_HPP
 #define PROCESS_MANAGEMENT_HPP
 
-#include "ProgressReporter.hpp"
 #include "Task.hpp"
 #include <sodium.h>
 #include <atomic>
@@ -43,16 +42,13 @@ class ProcessManagement {
         std::atomic<bool>                 shutdown_flag{false};
         std::atomic<bool>                 submissionComplete{false};
 
-        // --- Atomic counters written ONLY by workers via fetch_add(relaxed). ---
-        // uint64_t avoids signed-overflow on large batch jobs.
+        // Worker-written progress atomics: updated via relaxed fetch_add only.
         std::atomic<std::uint64_t> filesProcessed{0};
         std::atomic<std::uint64_t> failures{0};
         std::atomic<std::uint64_t> bytesProcessed{0};
 
-        // --- Pre-computed totals (main thread only, written before workers start). ---
-        // Plain (non-atomic): written in submitToQueue / read in executeTasks,
-        // both on the main thread with no concurrent access at those points.
-        std::uint64_t totalBytesAccum_{0}; // accumulated from Task::fileSize during submission
+        // Accumulated on the main thread during submitToQueue() before workers start.
+        std::uint64_t totalBytesAccum_{0};
 
         double      elapsedTime{0.0};
         int         numWorkers;
