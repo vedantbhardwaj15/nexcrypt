@@ -18,6 +18,9 @@ inline std::mutex &getApplicationLogMutex() {
     return mutex;
 }
 
+// Standard CPU cache line size (64 bytes on x86, x86_64, and ARM64).
+constexpr std::size_t CACHE_LINE_SIZE = 64;
+
 class ProcessManagement {
     public:
         explicit ProcessManagement(int numWorkers = 4, std::size_t chunkSizeKB = 256);
@@ -42,10 +45,10 @@ class ProcessManagement {
         std::atomic<bool>                 shutdown_flag{false};
         std::atomic<bool>                 submissionComplete{false};
 
-        // Worker-written progress atomics: updated via relaxed fetch_add only.
-        std::atomic<std::uint64_t> filesProcessed{0};
-        std::atomic<std::uint64_t> failures{0};
-        std::atomic<std::uint64_t> bytesProcessed{0};
+        // Worker-written progress atomics: isolated on distinct 64-byte cache lines to eliminate false sharing.
+        alignas(CACHE_LINE_SIZE) std::atomic<std::uint64_t> filesProcessed{0};
+        alignas(CACHE_LINE_SIZE) std::atomic<std::uint64_t> failures{0};
+        alignas(CACHE_LINE_SIZE) std::atomic<std::uint64_t> bytesProcessed{0};
 
         // Accumulated on the main thread during submitToQueue() before workers start.
         std::uint64_t totalBytesAccum_{0};
