@@ -1,6 +1,7 @@
 #include "Cryption.hpp"
 
 #include "../common/Colors.hpp"
+#include "../fileHandling/IO.hpp"
 
 #include <sodium.h>
 
@@ -138,6 +139,8 @@ bool encryptFile(const fs::path &inputPath, const fs::path &outputPath,
         std::cerr << Color::BoldRed << "[Crypto Error] " << Color::Reset << "Failed to initialize libsodium for file: " << inputPath.string() << '\n';
         return false;
     }
+
+    IO::hintSequentialRead(inputPath);
 
     std::ifstream in(inputPath, std::ios::binary);
     if (!in.is_open())
@@ -292,6 +295,8 @@ bool decryptFile(const fs::path &inputPath, const fs::path &outputPath,
         std::cerr << Color::BoldRed << "[Crypto Error] " << Color::Reset << "Failed to initialize libsodium for decryption." << '\n';
         return false;
     }
+
+    IO::hintSequentialRead(inputPath);
 
     std::ifstream in(inputPath, std::ios::binary);
     if (!in.is_open())
